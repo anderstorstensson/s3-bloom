@@ -1,0 +1,40 @@
+[project]
+name = "s3bloom"
+version = "0.1.0"
+description = "Sentinel-3 OLCI L2 phytoplankton bloom pipeline"
+readme = "README.md"
+authors = [
+    { name = "anderstorstensson", email = "anders.torstensson@smhi.se" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "satpy[cf]>=0.50",
+    "pyresample>=1.28",
+    "pycoast>=1.7",
+    "trollimage>=1.23",
+    "trollsift>=0.5",
+    "cdsetool>=0.2",
+    "xarray>=2024.1",
+    "rioxarray>=0.17",
+    "netcdf4>=1.7",
+    "pydantic>=2.5",
+    "typer>=0.12",
+    "rich>=13.0",
+    "dask[array]",
+    "pyproj>=3.7.2",
+    "matplotlib>=3.10.8",
+    "python-dotenv>=1.0",
+    "cmocean>=4.0.3",
+]
+
+[project.scripts]
+s3bloom = "s3bloom.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
