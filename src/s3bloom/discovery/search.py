@@ -84,9 +84,13 @@ def search_products(
         f"&$top={PAGE_SIZE}"
     )
 
+    from s3bloom.discovery.download import _create_session
+
+    session = _create_session()
+
     while url:
         logger.debug("Fetching: %s", url)
-        resp = requests.get(url, timeout=60)
+        resp = session.get(url, timeout=60)
         resp.raise_for_status()
         data = resp.json()
 
@@ -128,6 +132,6 @@ def _extract_satellite(title: str) -> str:
 def _parse_datetime(dt_str: str) -> datetime:
     """Parse ISO datetime string from CDSE."""
     if not dt_str:
-        return datetime.now(tz=timezone.utc)
+        raise ValueError("Empty datetime string in CDSE product metadata")
     dt_str = dt_str.replace("Z", "+00:00")
     return datetime.fromisoformat(dt_str)

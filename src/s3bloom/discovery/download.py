@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -18,13 +19,34 @@ from rich.progress import (
 )
 
 from s3bloom.config import PipelineConfig
-from s3bloom.defaults import MAX_PARALLEL_DOWNLOADS
 from s3bloom.discovery.search import ODATA_BASE, ProductInfo
 
 logger = logging.getLogger(__name__)
 console = Console()
 
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+
+RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+RETRY_TOTAL = 3
+RETRY_BACKOFF = 2.0
+
+
+def _create_session(**headers: str) -> requests.Session:
+    """Create a requests session with retry logic for transient errors."""
+    from urllib3.util.retry import Retry
+
+    session = requests.Session()
+    retry = Retry(
+        total=RETRY_TOTAL,
+        backoff_factor=RETRY_BACKOFF,
+        status_forcelist=RETRY_STATUS_CODES,
+        allowed_methods=["GET", "POST"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    if headers:
+        session.headers.update(headers)
+    return session
 
 
 def _get_access_token() -> str:
@@ -38,7 +60,8 @@ def _get_access_token() -> str:
             "environment variables."
         )
 
-    resp = requests.post(
+    session = _create_session()
+    resp = session.post(
         TOKEN_URL,
         data={
             "client_id": "cdse-public",
@@ -122,8 +145,7 @@ def _download_single(
     # First request without streaming to follow redirects,
     # then re-apply auth header on the final URL since requests
     # strips Authorization on cross-domain redirects.
-    session = requests.Session()
-    session.headers.update(headers)
+    session = _create_session(**headers)
     initial = session.get(url, allow_redirects=False, timeout=30)
     if initial.is_redirect or initial.status_code in (301, 302, 303, 307, 308):
         url = initial.headers["Location"]
@@ -153,7 +175,16 @@ def _download_single(
 
 def _extract_zip(zip_path: Path, raw_dir: Path) -> Path | None:
     """Extract .zip and return path to the .SEN3 directory inside."""
+    resolved_raw = raw_dir.resolve()
+
     with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.namelist():
+            member_path = (raw_dir / member).resolve()
+            if not str(member_path).startswith(str(resolved_raw)):
+                raise ValueError(
+                    f"Zip entry {member!r} would extract outside target directory"
+                )
+
         zf.extractall(raw_dir)
 
         for name in zf.namelist():

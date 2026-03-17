@@ -65,11 +65,6 @@ class BoundingBox(BaseModel):
                 f"Expected 4 comma-separated values or a preset name "
                 f"({', '.join(BBOX_PRESETS)}), got: {value!r}"
             ) from None
-        if len(parts) != 4:
-            raise ValueError(
-                f"Expected 4 comma-separated values or a preset name "
-                f"({', '.join(BBOX_PRESETS)}), got: {value!r}"
-            )
         return cls(
             lon_min=parts[0],
             lat_min=parts[1],

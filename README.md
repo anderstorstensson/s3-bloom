@@ -17,9 +17,8 @@ Skagerrak, but works for any region covered by Sentinel-3 OLCI.
 ## Installation
 
 ```bash
-git clone <repo-url> && cd sentinel-3
+git clone https://github.com/anderstorstensson/s3-bloom.git && cd s3-bloom
 
-# Create venv (if on exfat, create in home directory instead)
 uv venv
 uv sync
 

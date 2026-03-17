@@ -75,8 +75,7 @@ def extract_sensing_time(product_path: Path) -> datetime:
             except ValueError:
                 continue
 
-    logger.warning("Could not parse sensing time from %s, using now", name)
-    return datetime.now(tz=timezone.utc)
+    raise ValueError(f"Could not parse sensing time from product name: {name}")
 
 
 def extract_satellite(product_path: Path) -> str:
@@ -92,8 +91,6 @@ def extract_satellite(product_path: Path) -> str:
 def _collect_filenames(product_path: Path) -> list[str]:
     """Collect all .nc files from a .SEN3 directory for satpy."""
     nc_files = sorted(product_path.glob("*.nc"))
-    xml_files = sorted(product_path.glob("xfdumanifest.xml"))
-
     filenames = [str(f) for f in nc_files]
 
     if not filenames:

@@ -268,7 +268,11 @@ def _print_config_summary(config: PipelineConfig) -> None:
     console.print(f"  Output: {config.output.base_dir}")
 
 
-def _print_summary(pass_results, composite_files, config) -> None:
+def _print_summary(
+    pass_results: list,
+    composite_files: list[Path],
+    config: PipelineConfig,
+) -> None:
     total_pass_files = sum(len(pr.output_files) for pr in pass_results)
     console.print("\n[bold green]Pipeline complete![/bold green]")
     console.print(f"  Passes processed: {len(pass_results)}")

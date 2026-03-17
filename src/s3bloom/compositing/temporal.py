@@ -11,10 +11,8 @@ import numpy as np
 import xarray as xr
 
 from s3bloom.config import PipelineConfig
-from s3bloom.export.geotiff import export_geotiff
+from s3bloom.export import export_dataset
 from s3bloom.export.naming import composite_output_path
-from s3bloom.export.netcdf import export_netcdf
-from s3bloom.export.png import export_png
 from s3bloom.metadata.provenance import create_composite_provenance
 from s3bloom.processing.pipeline import PassResult
 
@@ -98,7 +96,7 @@ def create_composites(
                     satellites=satellites,
                     window_days=window,
                 )
-                _export_composite(composite, out_path, fmt, prov, dataset_name)
+                export_dataset(composite, out_path, fmt, prov, dataset_name)
                 output_files.append(out_path)
                 logger.info("Composite exported: %s", out_path)
 
@@ -161,21 +159,3 @@ def _nanmean_composite(arrays: list[xr.DataArray]) -> xr.DataArray:
     return composite
 
 
-def _export_composite(
-    data: xr.DataArray,
-    path: Path,
-    fmt: str,
-    provenance,
-    dataset_name: str,
-) -> None:
-    """Export composite in the specified format."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if fmt == "geotiff":
-        export_geotiff(data, path, provenance)
-    elif fmt == "netcdf":
-        export_netcdf(data, path, provenance, dataset_name)
-    elif fmt == "png":
-        export_png(data, path, provenance, dataset_name)
-    else:
-        raise ValueError(f"Unknown format: {fmt}")

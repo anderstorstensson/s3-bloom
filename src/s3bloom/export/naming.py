@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from s3bloom.export import FORMAT_EXTENSIONS
+
 
 def pass_filename(
     *,
@@ -49,8 +51,7 @@ def pass_output_path(
     satellite: str,
 ) -> Path:
     """Full path for a single-pass output file."""
-    ext_map = {"geotiff": "tif", "netcdf": "nc", "png": "png"}
-    ext = ext_map[fmt]
+    ext = FORMAT_EXTENSIONS[fmt]
     name = pass_filename(
         dataset=dataset,
         sensing_time=sensing_time,
@@ -70,8 +71,7 @@ def composite_output_path(
     window_days: int,
 ) -> Path:
     """Full path for a composite output file."""
-    ext_map = {"geotiff": "tif", "netcdf": "nc", "png": "png"}
-    ext = ext_map[fmt]
+    ext = FORMAT_EXTENSIONS[fmt]
     name = composite_filename(
         dataset=dataset,
         center_date=center_date,

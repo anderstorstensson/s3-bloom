@@ -10,10 +10,8 @@ from pathlib import Path
 import xarray as xr
 
 from s3bloom.config import PipelineConfig
-from s3bloom.export.geotiff import export_geotiff
+from s3bloom.export import export_dataset
 from s3bloom.export.naming import pass_output_path
-from s3bloom.export.netcdf import export_netcdf
-from s3bloom.export.png import export_png
 from s3bloom.metadata.provenance import Provenance, create_pass_provenance
 from s3bloom.processing.masking import apply_mask, build_quality_mask
 from s3bloom.processing.reader import (
@@ -97,7 +95,7 @@ def process_single_pass(
                 satellite=satellite,
             )
 
-            _export_dataset(data_array, out_path, fmt, prov, ds_name)
+            export_dataset(data_array, out_path, fmt, prov, ds_name)
             output_files.append(out_path)
             logger.info("Exported: %s", out_path)
 
@@ -109,23 +107,3 @@ def process_single_pass(
         provenance=provenance_records,
         output_files=output_files,
     )
-
-
-def _export_dataset(
-    data: xr.DataArray,
-    path: Path,
-    fmt: str,
-    provenance: Provenance,
-    dataset_name: str,
-) -> None:
-    """Export a single dataset in the specified format."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if fmt == "geotiff":
-        export_geotiff(data, path, provenance)
-    elif fmt == "netcdf":
-        export_netcdf(data, path, provenance, dataset_name)
-    elif fmt == "png":
-        export_png(data, path, provenance, dataset_name)
-    else:
-        raise ValueError(f"Unknown export format: {fmt}")
