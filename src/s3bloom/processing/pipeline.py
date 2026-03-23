@@ -61,10 +61,9 @@ def process_single_pass(
 
     scene = load_scene(product_path, config.datasets)
 
-    mask = build_quality_mask(scene, config.masking)
-
     for ds_name in config.datasets:
         if ds_name in scene:
+            mask = build_quality_mask(scene, config.masking, product=ds_name)
             scene[ds_name] = apply_mask(scene[ds_name], mask)
 
     target_area = create_target_area(config.bbox, config.output)
@@ -80,7 +79,7 @@ def process_single_pass(
             sensing_time=sensing_time,
             dataset=ds_name,
             masking_preset=config.masking.preset,
-            masking_flags=config.masking.flags,
+            masking_flags=config.masking.flags_for_product(ds_name),
             projection=config.output.projection,
             resolution_m=config.output.resolution_m,
         )

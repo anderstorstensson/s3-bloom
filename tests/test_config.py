@@ -80,6 +80,34 @@ class TestMaskingConfig:
         mc = MaskingConfig(custom_flags=["CLOUD", "INVALID"])
         assert mc.flags == ["CLOUD", "INVALID"]
 
+    def test_flags_for_chl_nn(self):
+        mc = MaskingConfig(preset="strict")
+        flags = mc.flags_for_product("chl_nn")
+        assert "CLOUD" in flags
+        assert "OCNN_FAIL" in flags
+        assert "AC_FAIL" not in flags
+        assert "RWNEG_O2" not in flags
+        assert "WHITECAPS" not in flags
+
+    def test_flags_for_chl_oc4me(self):
+        mc = MaskingConfig(preset="strict")
+        flags = mc.flags_for_product("chl_oc4me")
+        assert "CLOUD" in flags
+        assert "OC4ME_FAIL" in flags
+        assert "AC_FAIL" in flags
+        assert "RWNEG_O2" in flags
+
+    def test_flags_for_product_with_custom_flags(self):
+        mc = MaskingConfig(custom_flags=["CLOUD", "INVALID"])
+        assert mc.flags_for_product("chl_nn") == ["CLOUD", "INVALID"]
+
+    def test_moderate_chl_nn_no_bac_flags(self):
+        mc = MaskingConfig(preset="moderate")
+        flags = mc.flags_for_product("chl_nn")
+        assert "AC_FAIL" not in flags
+        assert "WHITECAPS" not in flags
+        assert "OCNN_FAIL" in flags
+
 
 class TestOutputConfig:
     def test_defaults(self):

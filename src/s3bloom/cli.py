@@ -24,7 +24,14 @@ from s3bloom.config import (
     PipelineConfig,
     TimePeriod,
 )
-from s3bloom.defaults import BBOX_PRESETS, DEFAULT_DATASETS, DEFAULT_MASKING, MASKING_PRESETS
+from s3bloom.defaults import (
+    BBOX_PRESETS,
+    DEFAULT_DATASETS,
+    DEFAULT_MASKING,
+    MASKING_PRESETS,
+    PRODUCT_FLAGS,
+    get_masking_flags,
+)
 
 app = typer.Typer(
     name="s3bloom",
@@ -115,6 +122,11 @@ def run(
         "--formats",
         help="Comma-separated output formats.",
     ),
+    no_composites: bool = typer.Option(
+        False,
+        "--no-composites",
+        help="Skip composite generation.",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -187,11 +199,15 @@ def run(
         console.print("[red]No passes were processed successfully.[/red]")
         raise typer.Exit(code=1)
 
-    console.print(
-        f"\n[bold blue]Step 4/4: Creating {config.output.composite_window_days}-day "
-        f"composites...[/bold blue]"
-    )
-    composite_files = create_composites(pass_results, config)
+    composite_files: list[Path] = []
+    if no_composites:
+        console.print("\n[dim]Skipping composite generation (--no-composites)[/dim]")
+    else:
+        console.print(
+            f"\n[bold blue]Step 4/4: Creating {config.output.composite_window_days}-day "
+            f"composites...[/bold blue]"
+        )
+        composite_files = create_composites(pass_results, config)
 
     _print_summary(pass_results, composite_files, config)
 
@@ -212,12 +228,15 @@ def list_presets() -> None:
     console.print(table)
     console.print()
 
-    table2 = Table(title="Masking Presets")
-    table2.add_column("Name", style="green")
+    table2 = Table(title="Masking Presets (product-aware)")
+    table2.add_column("Preset", style="green")
+    table2.add_column("Product", style="cyan")
     table2.add_column("Flags")
 
-    for name, flags in MASKING_PRESETS.items():
-        table2.add_row(name, ", ".join(flags))
+    for preset in MASKING_PRESETS:
+        for product in sorted(PRODUCT_FLAGS):
+            flags = get_masking_flags(preset, product)
+            table2.add_row(preset, product, ", ".join(flags))
 
     console.print(table2)
 
@@ -261,7 +280,9 @@ def _print_config_summary(config: PipelineConfig) -> None:
         f"({config.bbox.lon_max}, {config.bbox.lat_max})"
     )
     console.print(f"  Datasets: {', '.join(config.datasets)}")
-    console.print(f"  Masking: {config.masking.preset} ({len(config.masking.flags)} flags)")
+    for ds in config.datasets:
+        ds_flags = config.masking.flags_for_product(ds)
+        console.print(f"  Masking ({ds}): {config.masking.preset} ({len(ds_flags)} flags)")
     console.print(f"  Projection: {config.output.projection}")
     console.print(f"  Resolution: {config.output.resolution_m}m")
     console.print(f"  Composites: {config.output.composite_window_days}-day window")

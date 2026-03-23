@@ -16,6 +16,7 @@ from s3bloom.defaults import (
     DEFAULT_PROJECTION,
     DEFAULT_RESOLUTION,
     MASKING_PRESETS,
+    get_masking_flags,
 )
 
 
@@ -108,8 +109,22 @@ class MaskingConfig(BaseModel):
             )
         return v
 
+    def flags_for_product(self, product: str) -> list[str]:
+        """Return the correct flags for a specific product.
+
+        Combines common flags (strictness-dependent), processing-chain
+        flags (BAC only), and per-product algorithm failure flags.
+        """
+        if self.custom_flags is not None:
+            return list(self.custom_flags)
+        return get_masking_flags(self.preset, product)
+
     @property
     def flags(self) -> list[str]:
+        """Common flags for the current preset (product-agnostic).
+
+        Prefer ``flags_for_product(name)`` for product-aware masking.
+        """
         if self.custom_flags is not None:
             return list(self.custom_flags)
         return list(MASKING_PRESETS[self.preset])

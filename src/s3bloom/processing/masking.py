@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 def build_quality_mask(
     scene: Scene,
     masking_config: MaskingConfig,
+    *,
+    product: str | None = None,
 ) -> xr.DataArray:
     """Build a boolean mask from WQSF flags.
 
@@ -29,8 +31,14 @@ def build_quality_mask(
 
     Flag bit positions are read from the dataset's flag_meanings/flag_masks
     attributes, not hardcoded.
+
+    When *product* is given, the flag list is tailored to that product
+    (e.g. BAC flags for chl_oc4me, OCNN_FAIL for chl_nn).
     """
-    flags_to_mask = masking_config.flags
+    if product is not None:
+        flags_to_mask = masking_config.flags_for_product(product)
+    else:
+        flags_to_mask = masking_config.flags
     logger.info("Building quality mask with flags: %s", flags_to_mask)
 
     wqsf = scene["wqsf"]

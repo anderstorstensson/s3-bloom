@@ -9,6 +9,7 @@ from pathlib import Path
 
 import requests
 from requests.adapters import HTTPAdapter
+from requests.exceptions import RetryError
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -27,8 +28,8 @@ console = Console()
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 
 RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
-RETRY_TOTAL = 3
-RETRY_BACKOFF = 2.0
+RETRY_TOTAL = 5
+RETRY_BACKOFF = 4.0
 
 
 def _create_session(**headers: str) -> requests.Session:
@@ -110,6 +111,7 @@ def download_products(
     )
 
     token = _get_access_token()
+    failed: list[str] = []
 
     for i, product in enumerate(to_download, 1):
         console.print(
@@ -121,9 +123,25 @@ def download_products(
             path = _download_single(product, raw_dir, token)
             if path:
                 downloaded.append(path)
+        except RetryError:
+            failed.append(product.title)
+            console.print(
+                f"  [red]Failed: CDSE server unavailable after "
+                f"{RETRY_TOTAL} retries (502 Bad Gateway). "
+                f"This is a server-side issue.[/red]"
+            )
+            logger.warning("CDSE server error for %s", product.title)
         except Exception as exc:
+            failed.append(product.title)
             console.print(f"  [red]Failed: {exc}[/red]")
             logger.exception("Failed to download %s", product.title)
+
+    if failed:
+        console.print(
+            f"\n[yellow]{len(failed)} downloads failed due to CDSE server "
+            f"errors. Re-run to retry — already-downloaded products will "
+            f"be skipped.[/yellow]"
+        )
 
     console.print(
         f"[green]Download complete. {len(downloaded)} products available.[/green]"

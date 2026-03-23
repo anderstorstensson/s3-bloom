@@ -109,23 +109,44 @@ Quality masking uses the WQSF (Water Quality and Science Flags) bitfield from
 each product. Flag bit positions are read from product metadata at runtime, not
 hardcoded, following EUMETSAT guidance for cross-collection compatibility.
 
-| Preset | Flags | Use case |
-|--------|-------|----------|
-| **strict** (default) | 20 flags incl. CLOUD_MARGIN, SUSPECT, HIGHGLINT, ADJAC, RWNEG | Conservative; best for quantitative analysis |
-| **moderate** | 9 core flags | Balance between coverage and quality |
-| **relaxed** | 4 flags (CLOUD, INVALID, SATURATED, SNOW_ICE) | Maximum coverage; visual inspection only |
+Masking is **product-aware**: different OLCI products use different atmospheric
+correction paths and have different algorithm failure flags. The pipeline
+automatically selects the correct flags based on the dataset, following
+[EUMETSAT Matchup Protocols v8B, Appendix A](https://user.eumetsat.int/s3/eup-strapi-media/Recommendations_for_Sentinel_3_OLCI_Ocean_Colour_product_validations_in_comparison_with_in_situ_measurements_Matchup_Protocols_V8_B_e6c62ce677.pdf).
+
+### Flag categories
+
+| Category | Applies to | Examples |
+|----------|-----------|----------|
+| **Common** | All Ocean Colour products | CLOUD, CLOUD_AMBIGUOUS, CLOUD_MARGIN, INVALID, COSMETIC, SATURATED, SUSPECT, HISOLZEN, HIGHGLINT, SNOW_ICE |
+| **BAC processing chain** | Open Water products only (`chl_oc4me`) | AC_FAIL, WHITECAPS, ADJAC, RWNEG_O2–O8 |
+| **Product failure** | Per-product | OCNN_FAIL (`chl_nn`, `tsm_nn`, `iop_nn`), OC4ME_FAIL (`chl_oc4me`) |
+
+### Strictness presets
+
+The `--masking` option controls how many *common* flags are applied.
+Processing-chain and product failure flags are always added automatically.
+
+| Preset | Common flags | chl_nn total | chl_oc4me total | Use case |
+|--------|-------------|:---:|:---:|----------|
+| **strict** (default) | 10 (all) | 11 | 21 | Conservative; best for quantitative analysis |
+| **moderate** | 7 | 8 | 10 | Balance between coverage and quality |
+| **relaxed** | 4 | 5 | 5 | Maximum coverage; visual inspection only |
+
+Run `s3bloom list-presets` to see the exact flags per product and preset.
 
 ## Datasets
 
-| Name | Description | Units (stored) | Units (real) |
-|------|-------------|----------------|--------------|
-| `chl_nn` | Chlorophyll-a, neural network algorithm | log10(mg m⁻³) | mg m⁻³ |
-| `chl_oc4me` | Chlorophyll-a, OC4Me band-ratio algorithm | log10(mg m⁻³) | mg m⁻³ |
-| `tsm_nn` | Total suspended matter, neural network | log10(g m⁻³) | g m⁻³ |
+| Name | Description | Atm. correction | Units (stored) | Units (real) |
+|------|-------------|:---:|----------------|--------------|
+| `chl_nn` | Chlorophyll-a, neural network | AAC (Complex Water) | log10(mg m⁻³) | mg m⁻³ |
+| `chl_oc4me` | Chlorophyll-a, OC4Me band-ratio | BAC (Open Water) | log10(mg m⁻³) | mg m⁻³ |
+| `tsm_nn` | Total suspended matter, neural network | AAC (Complex Water) | log10(g m⁻³) | g m⁻³ |
 
-`chl_nn` is the default. It uses a neural network trained for Case-2 (coastal)
-waters, making it better suited for the optically complex Baltic/Kattegat than
-the open-ocean OC4Me algorithm.
+`chl_nn` is the default. It uses a neural network with the Alternative
+Atmospheric Correction (AAC), trained for Case-2 (coastal/complex) waters,
+making it better suited for the optically complex Baltic/Kattegat than the
+open-ocean OC4Me algorithm which uses the Baseline Atmospheric Correction (BAC).
 
 ## Detailed workflow
 
