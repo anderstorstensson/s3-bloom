@@ -7,6 +7,7 @@ BBOX_PRESETS: dict[str, tuple[float, float, float, float]] = {
     "kattegat": (10.0, 55.5, 13.0, 58.0),
     "skagerrak": (7.0, 57.0, 12.0, 59.5),
     "kattegat_skagerrak": (7.0, 55.5, 13.5, 59.5),
+    "kattegat_skagerrak_extended": (5.0, 55.5, 13.5, 60.0),
     "baltic_proper": (13.0, 54.0, 30.0, 66.0),
     "baltic_all": (7.0, 54.0, 30.0, 66.0),
 }
