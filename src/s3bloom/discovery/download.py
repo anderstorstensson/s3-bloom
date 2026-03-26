@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import zipfile
 from pathlib import Path
 
@@ -31,6 +32,65 @@ RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 RETRY_TOTAL = 5
 RETRY_BACKOFF = 4.0
 
+# Refresh token when less than this many seconds remain before expiry.
+_TOKEN_REFRESH_MARGIN_S = 60
+# Default token lifetime assumed when the server doesn't report one.
+_TOKEN_DEFAULT_LIFETIME_S = 300
+
+
+class _TokenManager:
+    """Manages CDSE access tokens with automatic refresh before expiry."""
+
+    def __init__(self) -> None:
+        self._token: str = ""
+        self._expires_at: float = 0.0
+
+    @property
+    def token(self) -> str:
+        if not self._token or self._is_expired():
+            self._refresh()
+        return self._token
+
+    def force_refresh(self) -> str:
+        self._refresh()
+        return self._token
+
+    def _is_expired(self) -> bool:
+        return time.monotonic() >= (self._expires_at - _TOKEN_REFRESH_MARGIN_S)
+
+    def _refresh(self) -> None:
+        logger.debug("Refreshing CDSE access token")
+        username = os.environ.get("CDSE_USERNAME", "")
+        password = os.environ.get("CDSE_PASSWORD", "")
+
+        if not username or not password:
+            raise RuntimeError(
+                "CDSE credentials required. Set CDSE_USERNAME and CDSE_PASSWORD "
+                "environment variables."
+            )
+
+        session = _create_session()
+        resp = session.post(
+            TOKEN_URL,
+            data={
+                "client_id": "cdse-public",
+                "grant_type": "password",
+                "username": username,
+                "password": password,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        token = body.get("access_token")
+        if not token:
+            raise RuntimeError("Failed to obtain access token from CDSE")
+
+        expires_in = int(body.get("expires_in", _TOKEN_DEFAULT_LIFETIME_S))
+        self._token = token
+        self._expires_at = time.monotonic() + expires_in
+        logger.info("CDSE token refreshed (expires in %ds)", expires_in)
+
 
 def _create_session(**headers: str) -> requests.Session:
     """Create a requests session with retry logic for transient errors."""
@@ -48,35 +108,6 @@ def _create_session(**headers: str) -> requests.Session:
     if headers:
         session.headers.update(headers)
     return session
-
-
-def _get_access_token() -> str:
-    """Get CDSE access token using client credentials."""
-    username = os.environ.get("CDSE_USERNAME", "")
-    password = os.environ.get("CDSE_PASSWORD", "")
-
-    if not username or not password:
-        raise RuntimeError(
-            "CDSE credentials required. Set CDSE_USERNAME and CDSE_PASSWORD "
-            "environment variables."
-        )
-
-    session = _create_session()
-    resp = session.post(
-        TOKEN_URL,
-        data={
-            "client_id": "cdse-public",
-            "grant_type": "password",
-            "username": username,
-            "password": password,
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    token = resp.json().get("access_token")
-    if not token:
-        raise RuntimeError("Failed to obtain access token from CDSE")
-    return token
 
 
 def download_products(
@@ -110,7 +141,7 @@ def download_products(
         f"[blue]Downloading {len(to_download)} products to {raw_dir}[/blue]"
     )
 
-    token = _get_access_token()
+    token_mgr = _TokenManager()
     failed: list[str] = []
 
     for i, product in enumerate(to_download, 1):
@@ -120,7 +151,7 @@ def download_products(
             f"  [{i}/{len(to_download)}] {product.title}"
         )
         try:
-            path = _download_single(product, raw_dir, token)
+            path = _download_single(product, raw_dir, token_mgr)
             if path:
                 downloaded.append(path)
         except RetryError:
@@ -152,43 +183,65 @@ def download_products(
 def _download_single(
     product: ProductInfo,
     raw_dir: Path,
-    token: str,
+    token_mgr: _TokenManager,
 ) -> Path | None:
-    """Download a single product via OData and extract the .SEN3 directory."""
-    url = f"{ODATA_BASE}/Products({product.product_id})/$value"
-    headers = {"Authorization": f"Bearer {token}"}
+    """Download a single product via OData and extract the .SEN3 directory.
 
+    If the server returns 403 (expired token), the token is refreshed
+    and the download is retried once.
+    """
     zip_path = raw_dir / f"{product.title}.zip"
 
-    # First request without streaming to follow redirects,
-    # then re-apply auth header on the final URL since requests
-    # strips Authorization on cross-domain redirects.
-    session = _create_session(**headers)
-    initial = session.get(url, allow_redirects=False, timeout=30)
-    if initial.is_redirect or initial.status_code in (301, 302, 303, 307, 308):
-        url = initial.headers["Location"]
+    for attempt in range(2):
+        token = token_mgr.token
+        url = f"{ODATA_BASE}/Products({product.product_id})/$value"
+        headers = {"Authorization": f"Bearer {token}"}
 
-    with session.get(url, stream=True, timeout=300) as resp:
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
+        # First request without streaming to follow redirects,
+        # then re-apply auth header on the final URL since requests
+        # strips Authorization on cross-domain redirects.
+        session = _create_session(**headers)
+        initial = session.get(url, allow_redirects=False, timeout=30)
 
-        with Progress(
-            TextColumn("    "),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("downloading", total=total)
+        if initial.status_code == 403 and attempt == 0:
+            logger.info("Got 403 on redirect check, refreshing token")
+            token_mgr.force_refresh()
+            continue
 
-            with open(zip_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
-                    f.write(chunk)
-                    progress.update(task, advance=len(chunk))
+        if initial.is_redirect or initial.status_code in (301, 302, 303, 307, 308):
+            url = initial.headers["Location"]
 
-    sen3_path = _extract_zip(zip_path, raw_dir)
-    zip_path.unlink()
-    return sen3_path
+        resp = session.get(url, stream=True, timeout=300)
+
+        if resp.status_code == 403 and attempt == 0:
+            resp.close()
+            logger.info("Got 403 on download, refreshing token")
+            token_mgr.force_refresh()
+            continue
+
+        with resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+
+            with Progress(
+                TextColumn("    "),
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("downloading", total=total)
+
+                with open(zip_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
+                        f.write(chunk)
+                        progress.update(task, advance=len(chunk))
+
+        sen3_path = _extract_zip(zip_path, raw_dir)
+        zip_path.unlink()
+        return sen3_path
+
+    return None
 
 
 def _extract_zip(zip_path: Path, raw_dir: Path) -> Path | None:
