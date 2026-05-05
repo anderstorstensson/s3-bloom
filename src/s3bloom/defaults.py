@@ -8,8 +8,12 @@ BBOX_PRESETS: dict[str, tuple[float, float, float, float]] = {
     "skagerrak": (7.0, 57.0, 12.0, 59.5),
     "kattegat_skagerrak": (7.0, 55.5, 13.5, 59.5),
     "kattegat_skagerrak_extended": (5.0, 55.5, 13.5, 60.0),
-    "baltic_proper": (13.0, 54.0, 30.0, 66.0),
-    "baltic_all": (7.0, 54.0, 30.0, 66.0),
+    # Egentliga Östersjön (HELCOM Baltic Proper sub-basins: Arkona, Bornholm,
+    # Gdansk, Eastern/Western Gotland, Northern Baltic Proper). Excludes
+    # Bothnian Sea/Bay, Gulf of Finland, Gulf of Riga.
+    "baltic_proper": (13.0, 54.0, 23.0, 60.0),
+    # Whole Baltic Sea incl. Bothnian Sea/Bay, Gulfs of Finland and Riga.
+    "baltic_all": (13.0, 54.0, 30.0, 66.0),
 }
 
 # --- WQSF masking flags (EUMETSAT Matchup Protocols v8B, Appendix A) -------
