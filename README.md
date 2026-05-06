@@ -1,5 +1,10 @@
 # s3bloom
 
+[![CI](https://github.com/anderstorstensson/s3-bloom/actions/workflows/ci.yml/badge.svg)](https://github.com/anderstorstensson/s3-bloom/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/anderstorstensson/s3-bloom/branch/main/graph/badge.svg)](https://codecov.io/gh/anderstorstensson/s3-bloom)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Sentinel-3 OLCI Level-2 phytoplankton bloom pipeline. Downloads ocean color
 data from the Copernicus Data Space Ecosystem (CDSE), applies quality masking,
 reprojects to a regular grid, and produces GeoTIFF, NetCDF, and PNG outputs
@@ -148,10 +153,14 @@ Atmospheric Correction (AAC), trained for Case-2 (coastal/complex) waters,
 making it better suited for the optically complex Baltic/Kattegat than the
 open-ocean OC4Me algorithm which uses the Baseline Atmospheric Correction (BAC).
 
-## Detailed workflow
+## Documentation
 
-See [docs/workflow.md](docs/workflow.md) for a step-by-step description of the
-processing pipeline, data flow, and design decisions.
+* [`docs/workflow.md`](docs/workflow.md) — step-by-step description of
+  the processing pipeline, data flow, and design decisions (read this
+  first).
+* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — code-level map for
+  maintainers: package layout, data types, dependency graph, and how
+  to add new presets, datasets, output formats, or CDSE collections.
 
 ## Development
 
@@ -159,6 +168,32 @@ processing pipeline, data flow, and design decisions.
 uv sync
 uv run pytest tests/ -v
 ```
+
+## Acknowledgements
+
+This pipeline builds on the open-source [Pytroll](https://pytroll.github.io/)
+ecosystem for satellite data processing. In particular it relies on:
+
+- **[satpy](https://github.com/pytroll/satpy)** — multi-mission reader and
+  scene abstraction (the OLCI L2 reader and resampling glue used here).
+- **[pyresample](https://github.com/pytroll/pyresample)** — swath-to-grid
+  reprojection.
+- **[pycoast](https://github.com/pytroll/pycoast)**,
+  **[trollimage](https://github.com/pytroll/trollimage)**,
+  **[trollsift](https://github.com/pytroll/trollsift)** — supporting
+  imagery, coastline overlays, and filename parsing.
+
+If you use s3bloom in published work, please also cite satpy:
+
+> Raspaud, M. *et al.* PyTroll: An open-source, community-driven Python
+> framework to process Earth observation satellite data. *Bulletin of
+> the American Meteorological Society* **99**, 1329–1336 (2018).
+> [doi:10.1175/BAMS-D-17-0277.1](https://doi.org/10.1175/BAMS-D-17-0277.1)
+
+Sentinel-3 OLCI data are produced by [EUMETSAT](https://www.eumetsat.int/)
+and distributed via the
+[Copernicus Data Space Ecosystem](https://dataspace.copernicus.eu/) under
+the Copernicus open-data licence.
 
 ## License
 

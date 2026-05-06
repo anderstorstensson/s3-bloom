@@ -1,4 +1,15 @@
-"""Load Sentinel-3 OLCI L2 products using satpy."""
+"""Load Sentinel-3 OLCI L2 products into satpy ``Scene`` objects.
+
+A ``.SEN3`` product is a directory of NetCDF files plus a manifest XML.
+This module passes the ``.nc`` files directly to satpy's ``olci_l2``
+reader; the manifest is not used because satpy reconstructs the geometry
+from the per-file metadata.
+
+The satellite identifier (S3A/S3B) and sensing time are parsed from the
+directory name rather than from file metadata. This is safe because
+EUMETSAT guarantees the naming convention; doing it this way avoids
+having to load the heavy NetCDFs just to read two scalars.
+"""
 
 from __future__ import annotations
 
@@ -17,14 +28,31 @@ def load_scene(
     product_path: Path,
     datasets: list[str],
 ) -> Scene:
-    """Load a .SEN3 product directory into a satpy Scene.
+    """Load a ``.SEN3`` product directory into a satpy :class:`~satpy.Scene`.
 
-    Args:
-        product_path: Path to the .SEN3 directory.
-        datasets: Dataset names to load (e.g. ['chl_nn']).
+    Parameters
+    ----------
+    product_path : pathlib.Path
+        Path to the extracted ``.SEN3`` directory.
+    datasets : list of str
+        Names of OLCI L2 datasets to load (e.g. ``["chl_nn"]``). Names
+        not present in the product are warned about and skipped, matching
+        EUMETSAT's recommendation to be permissive when collections evolve.
+        The WQSF flag layer is always loaded in addition to the requested
+        datasets — it is needed by the masking step.
 
-    Returns:
-        satpy Scene with requested datasets loaded.
+    Returns
+    -------
+    satpy.Scene
+        Scene with the requested datasets and ``wqsf`` available via
+        ``scene[name]``.
+
+    Raises
+    ------
+    ValueError
+        If none of the requested datasets are present in the product.
+    FileNotFoundError
+        If the directory contains no ``.nc`` files.
     """
     logger.info("Loading scene from %s", product_path)
 
@@ -50,6 +78,8 @@ def load_scene(
             f"in {product_path.name}"
         )
 
+    # WQSF is required for downstream quality masking, regardless of
+    # which scientific datasets the caller asked for.
     to_load.append("wqsf")
     scn.load(to_load)
 
@@ -58,10 +88,26 @@ def load_scene(
 
 
 def extract_sensing_time(product_path: Path) -> datetime:
-    """Extract sensing start time from the product directory name.
+    """Parse sensing-start time from the ``.SEN3`` directory name.
 
-    Filename format:
-    S3A_OL_2_WFR____20240315T091500_..._..._..._.SEN3
+    The EUMETSAT naming convention places a 15-character timestamp
+    ``YYYYMMDDTHHMMSS`` as the fifth underscore-separated field, e.g.
+    ``S3A_OL_2_WFR____20240315T091500_..._..._..._.SEN3``.
+
+    Parameters
+    ----------
+    product_path : pathlib.Path
+        Path whose ``.name`` is the standard product directory name.
+
+    Returns
+    -------
+    datetime
+        UTC-aware datetime of the sensing start.
+
+    Raises
+    ------
+    ValueError
+        If no token of the expected shape is present in the name.
     """
     name = product_path.name
     parts = name.split("_")
@@ -79,7 +125,11 @@ def extract_sensing_time(product_path: Path) -> datetime:
 
 
 def extract_satellite(product_path: Path) -> str:
-    """Extract satellite identifier from product directory name."""
+    """Return the spacecraft tag (``"S3A"``/``"S3B"``) from the product name.
+
+    Falls back to ``"S3X"`` for unrecognised prefixes so callers do not
+    have to handle ``None``.
+    """
     name = product_path.name
     if name.startswith("S3A"):
         return "S3A"
@@ -89,7 +139,13 @@ def extract_satellite(product_path: Path) -> str:
 
 
 def _collect_filenames(product_path: Path) -> list[str]:
-    """Collect all .nc files from a .SEN3 directory for satpy."""
+    """Return every ``*.nc`` file in *product_path* as a list of strings.
+
+    satpy expects a flat file list and discovers which dataset is in
+    which file from the file metadata. Files that satpy doesn't
+    recognise (tie points, instrument data, etc.) produce harmless
+    warnings, so we feed it the entire directory.
+    """
     nc_files = sorted(product_path.glob("*.nc"))
     filenames = [str(f) for f in nc_files]
 

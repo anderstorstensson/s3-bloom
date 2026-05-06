@@ -1,7 +1,27 @@
-"""WQSF quality/cloud masking for OLCI L2 products.
+"""WQSF (Water Quality Science Flags) quality / cloud masking.
 
-Flag definitions are read from product metadata rather than hardcoded
-bit positions, following EUMETSAT guidance for cross-collection compatibility.
+The WQSF layer in every OLCI L2 product is a per-pixel **bitfield**:
+each bit indicates one quality condition (cloud, sun glint, saturation,
+algorithm failure, ...). The masking step:
+
+1. Reads the flag-name → bit-mask table from the WQSF variable's
+   ``flag_meanings`` and ``flag_masks`` attributes (rather than
+   hardcoding bit positions, since these can change between processing
+   baselines).
+2. OR-combines the bit masks for the flags the caller wants to reject.
+3. Marks every pixel where ``wqsf & combined_bitmask != 0`` as bad.
+4. Returns a boolean :class:`xarray.DataArray` (``True`` = masked / bad).
+
+The mask is applied with :func:`apply_mask`, which sets bad pixels to
+NaN. NaN propagates correctly through resampling and is naturally
+ignored by ``nanmean`` compositing.
+
+Why use product metadata instead of a static table
+--------------------------------------------------
+EUMETSAT recommends reading flag masks from the product itself because
+the bit assignments are not formally guaranteed to be stable across
+processing baselines. Reading from metadata makes the pipeline
+forward-compatible with future reprocessings.
 """
 
 from __future__ import annotations
@@ -24,16 +44,36 @@ def build_quality_mask(
     *,
     product: str | None = None,
 ) -> xr.DataArray:
-    """Build a boolean mask from WQSF flags.
+    """Build a boolean per-pixel quality mask from WQSF flags.
 
-    True = pixel should be masked (bad quality).
-    False = pixel is good.
+    Parameters
+    ----------
+    scene : satpy.Scene
+        Scene that has been ``load()``-ed with ``"wqsf"`` available.
+    masking_config : MaskingConfig
+        Strictness preset (or custom flag list) to apply.
+    product : str, optional
+        Dataset name (``"chl_nn"``, ``"chl_oc4me"``, …). If given,
+        product-aware flags (BAC processing-chain, per-product algorithm
+        failure) are added on top of the common flags. If ``None``, only
+        common flags are used.
 
-    Flag bit positions are read from the dataset's flag_meanings/flag_masks
-    attributes, not hardcoded.
+    Returns
+    -------
+    xarray.DataArray
+        Boolean mask with the same dims/coords as ``scene["wqsf"]``;
+        ``True`` means "pixel is bad, mask it out".
 
-    When *product* is given, the flag list is tailored to that product
-    (e.g. BAC flags for chl_oc4me, OCNN_FAIL for chl_nn).
+    Notes
+    -----
+    Returns an all-``False`` mask (and warns) in two non-fatal cases:
+
+    * the WQSF layer carries no ``flag_meanings`` / ``flag_masks``
+      metadata at all;
+    * none of the requested flag names match anything in the metadata.
+
+    Both situations indicate something is wrong upstream, but masking
+    nothing is more useful than failing the entire run.
     """
     if product is not None:
         flags_to_mask = masking_config.flags_for_product(product)
@@ -71,6 +111,9 @@ def build_quality_mask(
             coords=wqsf.coords,
         )
 
+    # Cast to uint64 because some flag-mask arrays in product metadata
+    # exceed int32; the bitwise-AND must happen at >= the widest mask's
+    # bit-width.
     wqsf_values = wqsf.values if not hasattr(wqsf.data, "dask") else wqsf.data
     mask_data = (wqsf_values.astype(np.uint64) & np.uint64(combined_bitmask)) != 0
 
@@ -101,14 +144,26 @@ def apply_mask(
     data: xr.DataArray,
     mask: xr.DataArray,
 ) -> xr.DataArray:
-    """Apply quality mask: set masked pixels to NaN."""
+    """Set every pixel where ``mask`` is ``True`` to ``NaN``.
+
+    Returns a new DataArray; the input is not mutated. NaN is preferred
+    over a sentinel value because xarray and dask propagate it through
+    arithmetic, and ``nanmean`` ignores it during compositing.
+    """
     return data.where(~mask, other=np.nan)
 
 
 def _get_flag_definitions(
     wqsf: xr.DataArray,
 ) -> tuple[list[str], list[int]]:
-    """Extract flag_meanings and flag_masks from dataset attributes."""
+    """Extract ``flag_meanings`` / ``flag_masks`` from a WQSF DataArray.
+
+    Both attributes are normalised to plain Python lists. The two
+    attributes are aligned positionally: ``meanings[i]`` is the name of
+    the flag whose bitmask is ``masks[i]``. If the lengths disagree
+    (which has been observed in malformed products) the lists are
+    truncated to the shorter common prefix and a warning is logged.
+    """
     attrs = wqsf.attrs
 
     meanings_raw = attrs.get("flag_meanings", "")
@@ -145,7 +200,17 @@ def _build_combined_bitmask(
     flag_meanings: list[str],
     flag_masks: list[int],
 ) -> int:
-    """Build a combined bitmask from requested flag names."""
+    """OR-combine the bitmasks of every flag name in *flags_to_mask*.
+
+    If a requested flag name is not in ``flag_meanings`` exactly, a
+    *prefix* match is attempted. This handles cases like
+    ``RWNEG_O2``..``RWNEG_O8`` (negative water-leaving reflectance per
+    band) where the precise flag spelling has varied between processing
+    baselines.
+
+    Unmatched flags are logged at WARNING level but do not raise; the
+    pipeline continues with whichever flags it could resolve.
+    """
     meaning_to_mask = dict(zip(flag_meanings, flag_masks))
     combined = 0
     matched = []

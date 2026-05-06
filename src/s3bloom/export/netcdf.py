@@ -1,4 +1,21 @@
-"""CF-compliant NetCDF export via xarray."""
+"""CF-1.8 compliant NetCDF exporter.
+
+Goals (in priority order):
+
+1. **Self-describing**: any tool that follows the CF conventions can
+   open the file and plot it without out-of-band metadata.
+2. **Provenance-rich**: every output traces back to the source product,
+   the masking applied, and the pipeline version.
+3. **Compact**: zlib level-4 compression strikes a good balance between
+   size (~3-4× smaller than uncompressed) and read latency.
+
+CRS handling
+------------
+rioxarray attaches non-serializable CRS objects as coordinates which
+NetCDF4 cannot write. We strip those coordinates and instead store the
+CRS as the WKT string ``crs_wkt`` global attribute, which CF readers
+(xarray + ``decode_cf``, MetPy, etc.) understand.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +38,25 @@ def export_netcdf(
     provenance: Provenance,
     dataset_name: str,
 ) -> Path:
-    """Export a DataArray as a CF-compliant NetCDF file."""
+    """Write *data* as a CF-1.8 compliant NetCDF file.
+
+    Parameters
+    ----------
+    data : xarray.DataArray
+        Resampled array on the target grid.
+    path : pathlib.Path
+        Output path.
+    provenance : Provenance
+        Lineage record stored as ``s3bloom_*`` global attributes.
+    dataset_name : str
+        Logical dataset name; used to look up CF ``standard_name`` and
+        ``long_name`` and to set the variable name inside the file.
+
+    Returns
+    -------
+    pathlib.Path
+        Output path.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     ds = _build_dataset(data, dataset_name, provenance)
@@ -48,12 +83,19 @@ def _build_dataset(
     dataset_name: str,
     provenance: Provenance,
 ) -> xr.Dataset:
-    """Build a CF-compliant xr.Dataset from a DataArray."""
+    """Wrap *data* in a CF-1.8 :class:`xarray.Dataset` with metadata.
+
+    Adds ``long_name``, ``standard_name``, ``units``, ``valid_min``/
+    ``valid_max``, axis attributes for the projected coordinates, and
+    every provenance field as a global attribute.
+    """
     color_cfg = COLORMAP_SETTINGS.get(dataset_name, {})
 
     da = data.copy()
 
-    # Drop non-serializable coords added by rioxarray/satpy
+    # rioxarray/satpy attach a CRS object as a non-dim coord; netcdf4
+    # can't serialize Python objects. Drop everything except the real
+    # spatial coords.
     for coord_name in list(da.coords):
         if coord_name not in da.dims and coord_name not in ("x", "y"):
             da = da.drop_vars(coord_name)
@@ -102,6 +144,7 @@ def _build_dataset(
 
 
 def _long_name(dataset_name: str) -> str:
+    """CF ``long_name`` (human-readable description) for a dataset."""
     names = {
         "chl_nn": "Chlorophyll-a concentration (neural network)",
         "chl_oc4me": "Chlorophyll-a concentration (OC4Me algorithm)",
@@ -111,6 +154,11 @@ def _long_name(dataset_name: str) -> str:
 
 
 def _standard_name(dataset_name: str) -> str:
+    """CF ``standard_name`` from the official table.
+
+    Empty string is returned for datasets not in the lookup; CF allows
+    omitting the attribute when no standard name fits.
+    """
     names = {
         "chl_nn": "mass_concentration_of_chlorophyll_a_in_sea_water",
         "chl_oc4me": "mass_concentration_of_chlorophyll_a_in_sea_water",
