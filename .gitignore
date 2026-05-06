@@ -6,6 +6,13 @@ dist/
 wheels/
 *.egg-info
 
+# Test / coverage artefacts
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # Virtual environments
 .venv
 
@@ -14,3 +21,6 @@ data/
 
 # Environment
 .env
+
+# Scripts
+scripts/
