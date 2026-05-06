@@ -1,7 +1,24 @@
-"""Typer CLI for s3bloom pipeline."""
+"""Typer-based command-line interface for the s3bloom pipeline.
+
+Defines two commands:
+
+* ``s3bloom run`` — executes the full pipeline (search → download →
+  per-pass processing → compositing).
+* ``s3bloom list-presets`` — prints the available bounding-box and
+  masking presets.
+
+The CLI is intentionally a *thin* layer: it parses arguments, builds a
+:class:`s3bloom.config.PipelineConfig`, and orchestrates calls into the
+search / download / processing / compositing modules. Anything that is
+reusable beyond the CLI lives in those modules, not here.
+
+Heavy imports (satpy, matplotlib, …) are deferred to inside ``run`` so
+that ``s3bloom --help`` and ``s3bloom list-presets`` stay fast.
+"""
 
 from __future__ import annotations
 
+import gc
 import logging
 import sys
 from datetime import date
@@ -9,6 +26,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Load CDSE_USERNAME / CDSE_PASSWORD before any submodule that might
+# need them is imported.
 load_dotenv()
 
 import typer
@@ -42,6 +61,7 @@ console = Console()
 
 
 def _version_callback(value: bool) -> None:
+    """Eager ``--version`` callback: print and exit before anything else runs."""
     if value:
         console.print(f"s3bloom {__version__}")
         raise typer.Exit()
@@ -134,7 +154,14 @@ def run(
         help="Enable verbose logging.",
     ),
 ) -> None:
-    """Run the full bloom processing pipeline."""
+    """Run the full bloom processing pipeline.
+
+    Search → download → per-pass processing → optional compositing. Each
+    stage prints a numbered banner so a long run can be followed in the
+    terminal. Failures in one pass are logged and the next pass is
+    attempted; a run completes successfully as long as at least one
+    pass produced outputs.
+    """
     _setup_logging(verbose)
 
     try:
@@ -157,6 +184,8 @@ def run(
     _print_config_summary(config)
     config.ensure_directories()
 
+    # Heavy modules (satpy, matplotlib via the export package) are
+    # imported here so `--help` and `list-presets` stay fast.
     from s3bloom.compositing.temporal import create_composites
     from s3bloom.discovery.download import download_products
     from s3bloom.discovery.search import search_products
@@ -190,10 +219,16 @@ def run(
             result = process_single_pass(product_path, config)
             pass_results.append(result)
         except Exception as exc:
+            # One bad product must not abort the run — log and continue
+            # so the user gets results from every product that worked.
             console.print(f"  [red]Failed: {exc}[/red]")
             logging.getLogger(__name__).exception(
                 "Failed to process %s", product_path.name
             )
+        finally:
+            # satpy / xarray hold large lazy graphs; force collection
+            # between products to keep peak RSS low on long runs.
+            gc.collect()
 
     if not pass_results:
         console.print("[red]No passes were processed successfully.[/red]")
@@ -214,7 +249,12 @@ def run(
 
 @app.command()
 def list_presets() -> None:
-    """List available bounding box and masking presets."""
+    """Print the bounding-box and per-product masking presets.
+
+    Useful as a quick reference and as a sanity check that the masking
+    layer is producing the flag list you expect for a given preset and
+    dataset.
+    """
     table = Table(title="Bounding Box Presets")
     table.add_column("Name", style="green")
     table.add_column("lon_min")
@@ -254,6 +294,12 @@ def _build_config(
     composite_window: int,
     formats: str,
 ) -> PipelineConfig:
+    """Translate raw CLI strings into a validated :class:`PipelineConfig`.
+
+    All argument validation is delegated to the pydantic models (see
+    :mod:`s3bloom.config`). This function's only job is shape-conversion
+    (string → date, comma-list → list, etc.).
+    """
     sd = date.fromisoformat(start_date)
     ed = date.fromisoformat(end_date)
 
@@ -273,6 +319,7 @@ def _build_config(
 
 
 def _print_config_summary(config: PipelineConfig) -> None:
+    """Print the resolved configuration so the user can verify it."""
     console.print("\n[bold]Pipeline Configuration[/bold]")
     console.print(f"  Period: {config.time_period.start_date} to {config.time_period.end_date}")
     console.print(
@@ -294,6 +341,7 @@ def _print_summary(
     composite_files: list[Path],
     config: PipelineConfig,
 ) -> None:
+    """Print the final tally of passes and outputs at the end of a run."""
     total_pass_files = sum(len(pr.output_files) for pr in pass_results)
     console.print("\n[bold green]Pipeline complete![/bold green]")
     console.print(f"  Passes processed: {len(pass_results)}")
@@ -303,6 +351,12 @@ def _print_summary(
 
 
 def _setup_logging(verbose: bool) -> None:
+    """Configure rich-formatted logging for the CLI.
+
+    In non-verbose mode, satpy/pyresample/trollsift are clamped to
+    WARNING — they're chatty at INFO and drown out the pipeline's own
+    progress output.
+    """
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,

@@ -1,7 +1,33 @@
-"""Presets for bounding boxes, masking flags, and colormaps."""
+"""Pipeline-wide defaults: bounding-box presets, WQSF masking flag tables,
+default projection/resolution, and colormap settings.
+
+This module is the single source of truth for tunable constants. Anything
+that a user might reasonably want to change without editing application
+logic lives here.
+
+Notes
+-----
+Masking flags are split per the EUMETSAT Matchup Protocols v8B (Appendix A,
+Table 1) into three categories:
+
+1. *Common flags* — apply to every Ocean Colour product. The strictness
+   preset (``strict`` / ``moderate`` / ``relaxed``) selects which of these
+   are used.
+2. *Processing-chain flags* — only meaningful for products processed with
+   the **Baseline Atmospheric Correction** (BAC, Open Water case), e.g.
+   ``chl_oc4me``. They are *not* applied to AAC products such as
+   ``chl_nn`` / ``tsm_nn``.
+3. *Product flags* — algorithm-failure flags specific to each retrieval
+   (e.g. ``OC4ME_FAIL``, ``OCNN_FAIL``). These are always applied.
+
+See :func:`get_masking_flags` for the combination logic.
+"""
 
 from __future__ import annotations
 
+# Geographic regions that the pipeline's CLI accepts as ``--bbox <name>``.
+# Tuples are ``(lon_min, lat_min, lon_max, lat_max)`` in WGS84 (EPSG:4326).
+# Add new entries here to expose them to the CLI automatically.
 BBOX_PRESETS: dict[str, tuple[float, float, float, float]] = {
     "swedish_west_coast": (10.0, 56.5, 13.0, 59.0),
     "kattegat": (10.0, 55.5, 13.0, 58.0),
@@ -16,18 +42,9 @@ BBOX_PRESETS: dict[str, tuple[float, float, float, float]] = {
     "baltic_all": (13.0, 54.0, 30.0, 66.0),
 }
 
-# --- WQSF masking flags (EUMETSAT Matchup Protocols v8B, Appendix A) -------
-#
-# Flags are split into three categories per the EUMETSAT guidance:
-#   1. Common flags   – shared by all Ocean Colour products
-#   2. Processing-chain flags – BAC (Baseline Atmospheric Correction, Open
-#      Water) only; *not* applied to AAC (Alternative AC, Complex Water)
-#   3. Product flags  – per-product algorithm failure flags
-#
-# The strictness presets (strict / moderate / relaxed) control how many
-# *common* flags are applied.  Processing-chain and product flags are
-# selected automatically based on the requested dataset name.
-
+# Common flags by strictness — applied to every product. See module docstring.
+# Keep ordered roughly by impact on coverage so the diff between presets is
+# easy to read.
 _COMMON_FLAGS: dict[str, list[str]] = {
     "strict": [
         "CLOUD",
@@ -58,7 +75,10 @@ _COMMON_FLAGS: dict[str, list[str]] = {
     ],
 }
 
-# BAC processing-chain flags (Open Water products only)
+# BAC (Baseline Atmospheric Correction) processing-chain flags. Only attached
+# to products in :data:`BAC_PRODUCTS`. Includes the per-band negative
+# water-leaving reflectance flags (``RWNEG_O2``..``RWNEG_O8``) for the bands
+# the OC4Me ratio uses.
 _BAC_FLAGS: dict[str, list[str]] = {
     "strict": [
         "AC_FAIL",
@@ -92,14 +112,36 @@ PRODUCT_FLAGS: dict[str, list[str]] = {
 
 
 def get_masking_flags(preset: str, product: str) -> list[str]:
-    """Return the correct masking flags for a product at a given strictness.
+    """Return the WQSF flag list for a product at a given strictness.
 
-    Combines:
-      common flags (strictness-dependent)
-      + BAC processing-chain flags (only for Open Water products)
-      + product-specific algorithm failure flag
+    The returned list is the union of common flags (strictness-dependent),
+    BAC processing-chain flags (only for Open Water products such as
+    ``chl_oc4me``), and the product's algorithm-failure flag.
 
-    Based on EUMETSAT Matchup Protocols v8B, Appendix A, Table 1.
+    Parameters
+    ----------
+    preset : {"strict", "moderate", "relaxed"}
+        Strictness preset name. Controls which *common* flags are applied.
+    product : str
+        Dataset name, e.g. ``"chl_nn"`` or ``"chl_oc4me"``. Selects which
+        processing-chain and per-product flags are attached.
+
+    Returns
+    -------
+    list of str
+        Flag names suitable for matching against the product's
+        ``flag_meanings`` attribute. The list may contain entries that are
+        not present in a specific product's metadata; the masking layer
+        will warn and skip those.
+
+    Raises
+    ------
+    ValueError
+        If ``preset`` is not a known strictness preset.
+
+    Notes
+    -----
+    Reference: EUMETSAT Matchup Protocols v8B, Appendix A, Table 1.
     """
     if preset not in _COMMON_FLAGS:
         raise ValueError(
@@ -117,21 +159,38 @@ def get_masking_flags(preset: str, product: str) -> list[str]:
     return flags
 
 
-# Preset names exposed for CLI validation and help text.
+# Public copy of the common-flag table. Used by CLI validation and the
+# ``list-presets`` command. ``_COMMON_FLAGS`` stays private so that callers
+# go through :func:`get_masking_flags` and pick up product-aware logic.
 MASKING_PRESETS: dict[str, list[str]] = {
     name: list(flags) for name, flags in _COMMON_FLAGS.items()
 }
 
+# Strict is the default because for bloom monitoring a false negative
+# (keeping a bad pixel) corrupts composites silently, while a false positive
+# (masking a good pixel) is recoverable through compositing.
 DEFAULT_MASKING = "strict"
 
 DEFAULT_DATASETS: list[str] = ["chl_nn"]
 
+# EPSG:3035 (ETRS89 / LAEA Europe): equal-area, low distortion at Nordic
+# latitudes, INSPIRE-standard for EU environmental reporting.
 DEFAULT_PROJECTION = "EPSG:3035"
 
+# Native OLCI Full Resolution pixel is ~300 m; resampling to 300 m avoids
+# both up- and down-sampling artefacts.
 DEFAULT_RESOLUTION = 300  # metres
 
 COMPOSITE_WINDOW_DAYS = 3
 
+# Per-dataset visualisation defaults used by the PNG exporter.
+#   cmap          : matplotlib/cmocean colormap name
+#   vmin / vmax   : colorbar range, in real-units (mg m⁻³, g m⁻³)
+#   log_scale     : apply LogNorm to the colorbar (keeps low values visible)
+#   log10_encoded : the stored values are log10 of the real concentration;
+#                   the exporter inverts this for display only — GeoTIFF /
+#                   NetCDF outputs preserve the raw log10 values.
+#   label / units : colorbar label and axis units
 COLORMAP_SETTINGS: dict[str, dict] = {
     "chl_nn": {
         "cmap": "cmo.algae",
@@ -162,4 +221,7 @@ COLORMAP_SETTINGS: dict[str, dict] = {
     },
 }
 
+# CDSE rate-limits aggressive downloaders. Two parallel streams is the
+# largest value that has been observed to be reliably accepted; do not
+# raise this without confirming current CDSE policy.
 MAX_PARALLEL_DOWNLOADS = 2

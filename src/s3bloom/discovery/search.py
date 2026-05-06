@@ -1,4 +1,20 @@
-"""CDSE product search via OData API."""
+"""Discover Sentinel-3 OLCI L2 products via the CDSE OData catalogue.
+
+Search is read-only and does *not* require authentication, so this module
+can be exercised offline with a network mock. Authentication is required
+only for the download step (see :mod:`s3bloom.discovery.download`).
+
+The OData query combines four filters:
+
+* ``contains(Name, 'OL_2_WFR___')`` — Ocean Colour Level-2 Water Full
+  Resolution products only.
+* ``ContentDate/Start ge/le ...`` — sensing-time range.
+* ``OData.CSC.Intersects(area=...)`` — geographic intersection with the
+  bounding-box polygon (WGS84).
+
+Results are paginated server-side; this module follows the
+``@odata.nextLink`` cursor until exhausted.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +36,30 @@ PAGE_SIZE = 100
 
 @dataclass(frozen=True)
 class ProductInfo:
-    """Metadata for a discovered Sentinel-3 OLCI L2 product."""
+    """Catalogue metadata for one Sentinel-3 OLCI L2 product.
+
+    Attributes
+    ----------
+    product_id : str
+        Stable CDSE UUID. Use this to construct download URLs; titles can
+        change when products are reprocessed.
+    title : str
+        Product file-system name (without the trailing ``.zip``), e.g.
+        ``S3A_OL_2_WFR____20240315T091500_..._...``.
+    sensing_start : datetime
+        UTC start of the sensing window.
+    satellite : {"S3A", "S3B", "S3X"}
+        Spacecraft identifier extracted from ``title``. ``S3X`` is a
+        sentinel for unknown / future spacecraft.
+    footprint : str or None
+        Stringified GeoJSON footprint as returned by CDSE, or ``None`` if
+        the catalogue entry omitted it.
+    size_mb : float or None
+        Reported product size in megabytes, or ``None`` if unknown.
+    online : bool
+        ``True`` if the product is available for immediate download.
+        Offline products require a CDSE retrieval-from-archive request.
+    """
 
     product_id: str
     title: str
@@ -32,6 +71,7 @@ class ProductInfo:
 
     @classmethod
     def from_odata(cls, entry: dict[str, Any]) -> ProductInfo:
+        """Build a :class:`ProductInfo` from one OData catalogue entry."""
         title = entry.get("Name", "")
         satellite = _extract_satellite(title)
 
@@ -59,7 +99,29 @@ def search_products(
     bbox: BoundingBox,
     time_period: TimePeriod,
 ) -> list[ProductInfo]:
-    """Search CDSE for Sentinel-3 OLCI L2 WFR products via OData API."""
+    """Query CDSE for OLCI L2 WFR products in *bbox* and *time_period*.
+
+    Parameters
+    ----------
+    bbox : BoundingBox
+        Geographic AOI in WGS84 lon/lat. The query uses an
+        ``Intersects`` filter, so partial overlaps are returned.
+    time_period : TimePeriod
+        Sensing-time range. Inclusive on both ends, treated as UTC.
+
+    Returns
+    -------
+    list of ProductInfo
+        Sorted by sensing start time, ascending. Empty list if nothing
+        matches (no exception is raised in that case).
+
+    Notes
+    -----
+    Pagination is handled transparently via the ``@odata.nextLink``
+    cursor. The session reuses the retry-aware :func:`_create_session`
+    helper from the download module so transient 5xx responses are
+    retried automatically.
+    """
     logger.info(
         "Searching CDSE for %s products: %s to %s, bbox=%s",
         PRODUCT_TYPE,
@@ -84,6 +146,8 @@ def search_products(
         f"&$top={PAGE_SIZE}"
     )
 
+    # Imported lazily to avoid a circular import — download.py imports
+    # ProductInfo from this module.
     from s3bloom.discovery.download import _create_session
 
     session = _create_session()
@@ -104,9 +168,10 @@ def search_products(
 
 
 def _bbox_filter(bbox: BoundingBox) -> str:
-    """Build OData geographic filter from bounding box.
+    """Build the OData ``Intersects`` clause for *bbox*.
 
-    Uses OData.CSC.Intersects with a WKT polygon.
+    Returns the filter substring (without the leading ``and``). The
+    polygon is closed by repeating the first vertex, as required by WKT.
     """
     wkt = (
         f"POLYGON(("
@@ -121,7 +186,11 @@ def _bbox_filter(bbox: BoundingBox) -> str:
 
 
 def _extract_satellite(title: str) -> str:
-    """Extract satellite identifier (S3A or S3B) from product title."""
+    """Return ``"S3A"`` or ``"S3B"`` from a product title.
+
+    Falls back to ``"S3X"`` for unknown prefixes (e.g. future S3C/S3D
+    missions) so the caller never has to handle ``None``.
+    """
     if title.startswith("S3A"):
         return "S3A"
     if title.startswith("S3B"):
@@ -130,7 +199,7 @@ def _extract_satellite(title: str) -> str:
 
 
 def _parse_datetime(dt_str: str) -> datetime:
-    """Parse ISO datetime string from CDSE."""
+    """Parse an ISO-8601 datetime string from CDSE into a tz-aware datetime."""
     if not dt_str:
         raise ValueError("Empty datetime string in CDSE product metadata")
     dt_str = dt_str.replace("Z", "+00:00")

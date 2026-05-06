@@ -1,4 +1,22 @@
-"""3-day rolling nanmean composites."""
+"""Multi-day rolling-window ``nanmean`` composites.
+
+Single OLCI passes typically lose 60-90 % of their ocean pixels to
+clouds with strict masking. This module fills the gaps by averaging
+multiple passes over a centred N-day window. ``nanmean`` is used so
+that a pixel which is cloudy in some passes but clear in others
+contributes only its valid observations.
+
+Why nanmean
+-----------
+* Simple and reproducible — no weights, no priors.
+* Cloud-robust by construction.
+* Composes naturally over S3A + S3B passes on the same day.
+
+The window length comes from ``config.output.composite_window_days``.
+A composite is produced for every calendar day between the earliest
+and latest pass, even days without their own pass — neighbouring-day
+passes keep coverage continuous.
+"""
 
 from __future__ import annotations
 
@@ -23,12 +41,30 @@ def create_composites(
     pass_results: list[PassResult],
     config: PipelineConfig,
 ) -> list[Path]:
-    """Create rolling temporal composites from processed passes.
+    """Build rolling-window composites for every dataset in *pass_results*.
 
-    Groups passes by date, then for each date builds a composite
-    using a centered window of N days (nanmean).
+    For each dataset and each calendar day between the first and last
+    pass, the function:
 
-    Returns list of output file paths.
+    1. Selects every pass within ``±window/2`` days of the centre date.
+    2. Stacks them along a new ``pass_idx`` dimension.
+    3. Computes ``nanmean`` across that dimension.
+    4. Writes the composite in every requested output format.
+
+    Parameters
+    ----------
+    pass_results : list of PassResult
+        Output of :func:`s3bloom.processing.pipeline.process_single_pass`
+        for every successfully-processed pass.
+    config : PipelineConfig
+        Pipeline configuration; supplies the window size, output
+        directories, masking metadata for provenance, and target CRS.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        Every composite file written. May be empty if no passes were
+        provided, but the function never raises in that case.
     """
     window = config.output.composite_window_days
 
@@ -106,9 +142,19 @@ def create_composites(
 def _group_by_dataset(
     pass_results: list[PassResult],
 ) -> dict[str, dict[date, list[tuple[xr.DataArray, str, str]]]]:
-    """Group pass results by dataset name and date.
+    """Reshape pass results by dataset and sensing date.
 
-    Returns: {dataset_name: {date: [(data, satellite, product_name), ...]}}
+    Returns a nested dict::
+
+        {
+            dataset_name: {
+                date: [(data_array, satellite, source_product_name), ...]
+            }
+        }
+
+    Two passes from the same day on different spacecraft (S3A + S3B)
+    naturally end up in the same date bucket and contribute equally to
+    every composite that covers that day.
     """
     grouped: dict[str, dict[date, list[tuple[xr.DataArray, str, str]]]] = defaultdict(
         lambda: defaultdict(list)
@@ -128,10 +174,16 @@ def _compute_composite_dates(
     dates: list[date],
     window: int,
 ) -> list[date]:
-    """Compute the set of dates for which to produce composites.
+    """Return one centre date per calendar day in the observed range.
 
-    Produces a composite for every date that has data within reach
-    of the window.
+    Even days with no pass of their own get an entry — passes from
+    neighbouring days within the rolling window can still produce a
+    valid composite.
+
+    The ``window`` parameter is currently unused (the date grid is
+    independent of the window length); it is kept on the signature so
+    a future change can compute a different stride without breaking
+    callers.
     """
     if not dates:
         return []
@@ -148,7 +200,13 @@ def _compute_composite_dates(
 
 
 def _nanmean_composite(arrays: list[xr.DataArray]) -> xr.DataArray:
-    """Compute nanmean across a list of DataArrays."""
+    """Average a list of DataArrays along a new dim, ignoring NaN.
+
+    Single-array input is short-circuited to a copy so the trivial
+    one-pass-window case stays cheap. The result inherits the first
+    array's attributes (CRS, units, …); these are identical across
+    inputs because every array came from the same target grid.
+    """
     if len(arrays) == 1:
         return arrays[0].copy()
 

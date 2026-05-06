@@ -1,4 +1,21 @@
-"""PNG map export with land mask, coastlines, and lat/lon gridlines."""
+"""Quick-look PNG maps with cartopy.
+
+Each PNG is a publication-quality map: data layer on top, Natural Earth
+10 m land polygon below it, thin coastline trace, optional graticule,
+and a colorbar matching the dataset's recommended palette
+(``cmocean.algae`` for chlorophyll, ``cmocean.turbid`` for TSM).
+
+Stored vs displayed values
+--------------------------
+The OLCI L2 chlorophyll/TSM products store ``log10`` of the
+concentration. The GeoTIFF and NetCDF outputs preserve those raw
+log-space values, but PNG maps display the **linear** concentration
+because that is what humans expect to see; this is controlled by the
+``log10_encoded`` flag in :data:`s3bloom.defaults.COLORMAP_SETTINGS`.
+
+The ``Agg`` matplotlib backend is forced at import time to keep this
+module headless / display-free (CI, server, etc.).
+"""
 
 from __future__ import annotations
 
@@ -32,7 +49,14 @@ _COASTLINE_FEATURE = cfeature.NaturalEarthFeature(
 
 
 def _projection_from_epsg(epsg_str: str) -> ccrs.Projection:
-    """Convert an EPSG string like 'EPSG:3035' to a cartopy CRS."""
+    """Convert an ``"EPSG:nnnn"`` string to a cartopy projection.
+
+    Lambert Azimuthal Equal Area (used by EPSG:3035, the default) gets
+    a fully-parameterised :class:`cartopy.crs.LambertAzimuthalEqualArea`
+    so that gridlines render correctly. All other CRSs go through
+    :func:`cartopy.crs.epsg`, which works for most projected CRSs but
+    can fail on niche ones.
+    """
     code = int(epsg_str.split(":")[-1])
     proj = pyproj.CRS.from_epsg(code)
     cf = proj.to_cf()
@@ -55,7 +79,26 @@ def export_png(
     provenance: Provenance,
     dataset_name: str,
 ) -> Path:
-    """Export a DataArray as a PNG map with land mask, coastlines, and gridlines."""
+    """Render *data* as a quick-look PNG map.
+
+    Parameters
+    ----------
+    data : xarray.DataArray
+        Resampled array on the target grid; must have ``x``/``y``
+        projected coordinates.
+    path : pathlib.Path
+        Output path.
+    provenance : Provenance
+        Used for the title and to derive the cartopy CRS.
+    dataset_name : str
+        Used to look up the colormap, value range and units in
+        :data:`s3bloom.defaults.COLORMAP_SETTINGS`.
+
+    Returns
+    -------
+    pathlib.Path
+        The path that was written.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     color_cfg = COLORMAP_SETTINGS.get(
@@ -68,6 +111,9 @@ def export_png(
         values = values.compute()
     values = np.asarray(values, dtype=np.float64)
 
+    # OLCI L2 chl/tsm products store log10(concentration); convert to
+    # linear units for display only. The on-disk GeoTIFF/NetCDF outputs
+    # preserve the raw log10 values for quantitative analysis.
     if color_cfg.get("log10_encoded"):
         values = np.power(10.0, values)
 
@@ -80,6 +126,8 @@ def export_png(
 
     norm = _create_norm(color_cfg)
     cmap = plt.get_cmap(color_cfg["cmap"]).copy()
+    # Render NaN (= masked or land) pixels in neutral gray instead of
+    # making them transparent — preserves the dataset's footprint.
     cmap.set_bad(color="#d9d9d9")
 
     y_vals = np.asarray(data.coords.get("y", np.arange(values.shape[0])))
@@ -122,7 +170,7 @@ def export_png(
 
 
 def _create_norm(color_cfg: dict) -> mcolors.Normalize:
-    """Create a matplotlib norm (linear or log)."""
+    """Build a matplotlib norm — log when ``log_scale`` is set, else linear."""
     if color_cfg.get("log_scale"):
         return mcolors.LogNorm(
             vmin=color_cfg["vmin"],
@@ -135,7 +183,7 @@ def _create_norm(color_cfg: dict) -> mcolors.Normalize:
 
 
 def _build_title(provenance: Provenance, dataset_name: str) -> str:
-    """Build a descriptive title for the PNG."""
+    """Compose a two-line title summarising the data shown."""
     time_str = provenance.sensing_time.strftime("%Y-%m-%d %H:%M UTC")
 
     if provenance.composite_window_days:

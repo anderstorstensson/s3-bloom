@@ -1,4 +1,25 @@
-"""CDSE product download via OData API with idempotency and progress."""
+"""Download Sentinel-3 OLCI L2 products from CDSE.
+
+The download flow is:
+
+1. Read CDSE credentials from the environment (``CDSE_USERNAME`` /
+   ``CDSE_PASSWORD``, typically loaded from ``.env`` by the CLI).
+2. Exchange the credentials for an OAuth2 access token at the Keycloak
+   token endpoint. Tokens are managed by :class:`_TokenManager` which
+   refreshes them ahead of expiry and on any 403 response.
+3. For each product not already on disk, ``GET`` the
+   ``Products({id})/$value`` endpoint, follow the redirect to the actual
+   download server (re-applying the bearer token because ``requests``
+   strips ``Authorization`` on cross-domain redirects), stream the zip
+   to disk, extract the ``.SEN3`` directory, and delete the zip.
+
+The pipeline is *idempotent*: a re-run with the same parameters skips
+products whose ``.SEN3`` directory already exists with a manifest file.
+This makes "re-run on failure" the standard recovery pattern.
+
+Concurrency is intentionally low (sequential) because CDSE rate-limits
+aggressive downloaders.
+"""
 
 from __future__ import annotations
 
@@ -39,7 +60,14 @@ _TOKEN_DEFAULT_LIFETIME_S = 300
 
 
 class _TokenManager:
-    """Manages CDSE access tokens with automatic refresh before expiry."""
+    """Issue and refresh CDSE OAuth2 access tokens.
+
+    A single instance is shared by all downloads in one CLI invocation.
+    Access via the :attr:`token` property; the manager refreshes
+    transparently when the token is missing or about to expire. Use
+    :meth:`force_refresh` after a 403 response to recover from a token
+    revoked server-side before its advertised expiry.
+    """
 
     def __init__(self) -> None:
         self._token: str = ""
@@ -47,15 +75,19 @@ class _TokenManager:
 
     @property
     def token(self) -> str:
+        """Return a valid access token, refreshing if necessary."""
         if not self._token or self._is_expired():
             self._refresh()
         return self._token
 
     def force_refresh(self) -> str:
+        """Discard the cached token and fetch a new one."""
         self._refresh()
         return self._token
 
     def _is_expired(self) -> bool:
+        # Treat a token as expired slightly before its real deadline so we
+        # never send a token that expires mid-request.
         return time.monotonic() >= (self._expires_at - _TOKEN_REFRESH_MARGIN_S)
 
     def _refresh(self) -> None:
@@ -93,7 +125,18 @@ class _TokenManager:
 
 
 def _create_session(**headers: str) -> requests.Session:
-    """Create a requests session with retry logic for transient errors."""
+    """Build a :class:`requests.Session` with exponential-backoff retry.
+
+    Retries cover the ``RETRY_STATUS_CODES`` set (rate-limit + 5xx). The
+    backoff factor is intentionally large (~4s) because CDSE 502/503
+    spikes typically last tens of seconds.
+
+    Parameters
+    ----------
+    **headers : str
+        Additional default headers (e.g. ``Authorization``) to attach to
+        every request issued through the session.
+    """
     from urllib3.util.retry import Retry
 
     session = requests.Session()
@@ -115,9 +158,28 @@ def download_products(
     raw_dir: Path,
     config: PipelineConfig,
 ) -> list[Path]:
-    """Download products to raw_dir. Skips already-downloaded products.
+    """Download every product in *products* to *raw_dir*, skipping duplicates.
 
-    Returns list of paths to downloaded .SEN3 directories.
+    Idempotent: products whose ``.SEN3`` directory is already present
+    (with a ``xfdumanifest.xml`` inside) are not re-downloaded. Failed
+    downloads are logged and skipped — the user is told to re-run, which
+    will pick up only the missing products.
+
+    Parameters
+    ----------
+    products : list of ProductInfo
+        Catalogue entries from :func:`s3bloom.discovery.search.search_products`.
+    raw_dir : pathlib.Path
+        Target directory; created if missing.
+    config : PipelineConfig
+        Currently unused but reserved for future per-run knobs (parallelism,
+        bandwidth limits, etc.). Kept on the signature for stability.
+
+    Returns
+    -------
+    list of pathlib.Path
+        Paths to ``.SEN3`` directories that are now on disk (both
+        already-present and freshly downloaded).
     """
     raw_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[Path] = []
@@ -185,10 +247,15 @@ def _download_single(
     raw_dir: Path,
     token_mgr: _TokenManager,
 ) -> Path | None:
-    """Download a single product via OData and extract the .SEN3 directory.
+    """Download one product, extract the ``.SEN3`` directory, return its path.
 
-    If the server returns 403 (expired token), the token is refreshed
-    and the download is retried once.
+    Implements a small two-attempt loop: if the server returns 403 on
+    either the redirect probe or the streamed body, the token is forced
+    to refresh and the request is retried once. Subsequent 403s
+    propagate as ``HTTPError``.
+
+    Returns ``None`` if the zip turned out not to contain a ``.SEN3``
+    directory (a malformed product), which is logged at WARNING level.
     """
     zip_path = raw_dir / f"{product.title}.zip"
 
@@ -245,10 +312,17 @@ def _download_single(
 
 
 def _extract_zip(zip_path: Path, raw_dir: Path) -> Path | None:
-    """Extract .zip and return path to the .SEN3 directory inside."""
+    """Extract *zip_path* and return the inner ``.SEN3`` directory.
+
+    Performs a path-traversal check against every member before
+    extraction (defence against a malicious zip that tries to escape
+    *raw_dir* via ``../`` entries).
+    """
     resolved_raw = raw_dir.resolve()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
+        # Defence against zip-slip: every resolved member path must be
+        # contained within the target directory.
         for member in zf.namelist():
             member_path = (raw_dir / member).resolve()
             if not str(member_path).startswith(str(resolved_raw)):
@@ -271,7 +345,19 @@ def _find_existing_products(
     raw_dir: Path,
     products: list[ProductInfo],
 ) -> dict[str, Path]:
-    """Check which products are already downloaded."""
+    """Find which products from *products* are already extracted on disk.
+
+    A product counts as "present" when a directory whose name matches the
+    product title exists *and* contains an ``xfdumanifest.xml`` file —
+    the manifest's presence is treated as a marker that extraction
+    completed without truncation.
+
+    Returns
+    -------
+    dict[str, pathlib.Path]
+        Mapping ``product_id -> path-to-.SEN3-dir`` for already-present
+        products. Products not on disk are absent from the dict.
+    """
     existing: dict[str, Path] = {}
     if not raw_dir.exists():
         return existing

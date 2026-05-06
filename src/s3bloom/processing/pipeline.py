@@ -1,4 +1,14 @@
-"""Single-pass processing orchestrator."""
+"""Per-pass processing orchestrator: load → mask → resample → export.
+
+This is the inner loop of the pipeline. Each ``.SEN3`` product passes
+through this module exactly once. Failures here are caught at the CLI
+level and recorded; processing of subsequent passes continues.
+
+The :class:`PassResult` returned by :func:`process_single_pass` is the
+hand-off to the compositing stage — it carries the resampled DataArrays
+in memory (cheap: ~500k floats per pass) so we don't have to re-read
+them from disk later.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +36,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PassResult:
-    """Result of processing a single satellite pass."""
+    """Outputs and metadata for one fully-processed satellite pass.
+
+    Attributes
+    ----------
+    product_path : pathlib.Path
+        Source ``.SEN3`` directory.
+    satellite : str
+        ``"S3A"``/``"S3B"``/``"S3X"``.
+    sensing_time : datetime
+        UTC sensing-start time (from the product directory name).
+    datasets : dict[str, xarray.DataArray]
+        Resampled DataArrays keyed by dataset name. Held in memory so
+        the compositing stage can reuse them without re-loading.
+    provenance : dict[str, Provenance]
+        Per-dataset provenance records describing how each output was
+        produced.
+    output_files : list of pathlib.Path
+        Every file written for this pass, across all formats.
+    """
 
     product_path: Path
     satellite: str
@@ -40,14 +68,29 @@ def process_single_pass(
     product_path: Path,
     config: PipelineConfig,
 ) -> PassResult:
-    """Process a single .SEN3 product through the full pipeline.
+    """Run the full per-pass pipeline on one ``.SEN3`` product.
 
     Steps:
-        1. Load scene with satpy
-        2. Build quality mask from WQSF flags
-        3. Apply mask (bad pixels -> NaN)
-        4. Resample swath to regular grid
-        5. Export to configured formats
+
+    1. Read sensing-time and satellite from the directory name.
+    2. Load the scene with satpy (:mod:`s3bloom.processing.reader`).
+    3. For every requested dataset, build a product-aware quality mask
+       from WQSF and set bad pixels to NaN.
+    4. Resample masked swaths onto the configured target grid.
+    5. Build provenance records and export each resampled dataset to
+       every requested format.
+
+    Parameters
+    ----------
+    product_path : pathlib.Path
+        Path to the extracted ``.SEN3`` directory.
+    config : PipelineConfig
+        Validated pipeline configuration.
+
+    Returns
+    -------
+    PassResult
+        In-memory results plus a list of paths that were written.
     """
     satellite = extract_satellite(product_path)
     sensing_time = extract_sensing_time(product_path)
@@ -61,6 +104,9 @@ def process_single_pass(
 
     scene = load_scene(product_path, config.datasets)
 
+    # Mask is built per-dataset because the flag list is product-aware
+    # (BAC vs AAC, OC4ME_FAIL vs OCNN_FAIL, etc.). Building it once per
+    # product keeps memory usage flat.
     for ds_name in config.datasets:
         if ds_name in scene:
             mask = build_quality_mask(scene, config.masking, product=ds_name)
