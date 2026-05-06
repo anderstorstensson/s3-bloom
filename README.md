@@ -84,8 +84,9 @@ Shows available bounding box and masking presets.
 | `kattegat` | Kattegat strait | 10.0–13.0 | 55.5–58.0 |
 | `skagerrak` | Skagerrak basin | 7.0–12.0 | 57.0–59.5 |
 | `kattegat_skagerrak` | Combined region | 7.0–13.5 | 55.5–59.5 |
-| `baltic_proper` | Central Baltic | 13.0–30.0 | 54.0–66.0 |
-| `baltic_all` | Full Baltic + straits | 7.0–30.0 | 54.0–66.0 |
+| `kattegat_skagerrak_extended` | Extended Kattegat–Skagerrak | 5.0–13.5 | 55.5–60.0 |
+| `baltic_proper` | Central Baltic (HELCOM Baltic Proper) | 13.0–23.0 | 54.0–60.0 |
+| `baltic_all` | Full Baltic + Bothnian Sea/Bay + Gulfs | 13.0–30.0 | 54.0–66.0 |
 
 ## Output structure
 
