@@ -128,6 +128,32 @@ class TestOutputConfig:
             OutputConfig(formats=["geotiff", "jpeg"])
 
 
+class TestEnsureDirectories:
+    def test_creates_full_directory_tree(self, tmp_path):
+        from pathlib import Path
+
+        config = PipelineConfig(
+            bbox=BoundingBox.from_string("swedish_west_coast"),
+            time_period=TimePeriod(start_date=date(2024, 3, 1), end_date=date(2024, 3, 31)),
+            output=OutputConfig(base_dir=tmp_path),
+        )
+        config.ensure_directories()
+
+        assert (tmp_path / "raw").is_dir()
+        for sub in ["geotiff", "netcdf", "png"]:
+            assert (tmp_path / "processed" / sub).is_dir()
+            assert (tmp_path / "composites" / sub).is_dir()
+
+    def test_idempotent(self, tmp_path):
+        config = PipelineConfig(
+            bbox=BoundingBox.from_string("swedish_west_coast"),
+            time_period=TimePeriod(start_date=date(2024, 3, 1), end_date=date(2024, 3, 31)),
+            output=OutputConfig(base_dir=tmp_path),
+        )
+        config.ensure_directories()
+        config.ensure_directories()  # must not raise
+
+
 class TestPipelineConfig:
     def test_valid_config(self):
         config = PipelineConfig(
