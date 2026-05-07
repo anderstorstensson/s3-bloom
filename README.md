@@ -70,6 +70,8 @@ s3bloom run \
 | `--resolution` | | `300` | Grid resolution in metres |
 | `--composite-window` | | `3` | Rolling composite window in days |
 | `--formats` | | `geotiff,netcdf,png` | Output formats |
+| `--no-composites` | | off | Skip composite generation |
+| `--delete-raw` | | off | Delete `.SEN3` directories after successful processing |
 | `--verbose` | `-v` | off | Debug logging |
 
 ### `s3bloom list-presets`

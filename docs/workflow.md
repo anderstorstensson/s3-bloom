@@ -75,6 +75,13 @@ For each product:
 
 Products are downloaded sequentially to respect CDSE rate limits.
 
+### Disk space
+
+Each `.SEN3` directory is ~500 MB. By default they are kept in `data/raw/` so
+re-runs can skip re-downloading. Pass `--delete-raw` to remove each `.SEN3`
+directory immediately after its pass is processed successfully. Failed passes
+are never deleted, so they remain available for inspection or retry.
+
 ### .SEN3 directory structure
 
 Each downloaded product is a directory containing ~35 NetCDF files:

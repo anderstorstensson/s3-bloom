@@ -217,6 +217,7 @@ class OutputConfig(BaseModel):
     projection: str = DEFAULT_PROJECTION
     resolution_m: int = DEFAULT_RESOLUTION
     composite_window_days: int = COMPOSITE_WINDOW_DAYS
+    delete_raw: bool = False
 
     @field_validator("formats")
     @classmethod

@@ -103,6 +103,14 @@ class TestBuildConfig:
         with pytest.raises(ValueError):
             self._call(bbox_str="not_a_preset_or_csv")
 
+    def test_delete_raw_defaults_to_false(self):
+        config = self._call()
+        assert config.output.delete_raw is False
+
+    def test_delete_raw_true_propagates(self):
+        config = self._call(delete_raw=True)
+        assert config.output.delete_raw is True
+
 
 # ---------------------------------------------------------------------------
 # run command — mock all external I/O
@@ -173,3 +181,66 @@ class TestRunCommand:
                 "--verbose",
             ])
         assert result.exit_code == 0
+
+    def test_delete_raw_flag_accepted(self, tmp_path):
+        with patch("s3bloom.discovery.search.search_products", return_value=[]):
+            result = runner.invoke(app, _RUN_BASE_ARGS + [
+                "--output-dir", str(tmp_path),
+                "--delete-raw",
+            ])
+        assert result.exit_code == 0
+
+    def test_delete_raw_removes_product_dir_after_successful_pass(
+        self, tmp_path, simple_dataarray, provenance
+    ):
+        product_dir = tmp_path / "p.SEN3"
+        product_dir.mkdir()
+        pr = _pass_result(tmp_path, simple_dataarray, provenance)
+        with (
+            patch("s3bloom.discovery.search.search_products", return_value=[MagicMock()]),
+            patch("s3bloom.discovery.download.download_products", return_value=[product_dir]),
+            patch("s3bloom.processing.pipeline.process_single_pass", return_value=pr),
+            patch("shutil.rmtree") as mock_rmtree,
+        ):
+            result = runner.invoke(app, _RUN_BASE_ARGS + [
+                "--output-dir", str(tmp_path),
+                "--no-composites",
+                "--delete-raw",
+            ])
+        assert result.exit_code == 0
+        mock_rmtree.assert_called_once_with(product_dir)
+
+    def test_delete_raw_not_called_by_default(
+        self, tmp_path, simple_dataarray, provenance
+    ):
+        product_dir = tmp_path / "p.SEN3"
+        product_dir.mkdir()
+        pr = _pass_result(tmp_path, simple_dataarray, provenance)
+        with (
+            patch("s3bloom.discovery.search.search_products", return_value=[MagicMock()]),
+            patch("s3bloom.discovery.download.download_products", return_value=[product_dir]),
+            patch("s3bloom.processing.pipeline.process_single_pass", return_value=pr),
+            patch("shutil.rmtree") as mock_rmtree,
+        ):
+            result = runner.invoke(app, _RUN_BASE_ARGS + [
+                "--output-dir", str(tmp_path),
+                "--no-composites",
+            ])
+        assert result.exit_code == 0
+        mock_rmtree.assert_not_called()
+
+    def test_delete_raw_not_called_on_failed_pass(self, tmp_path):
+        product_dir = tmp_path / "p.SEN3"
+        product_dir.mkdir()
+        with (
+            patch("s3bloom.discovery.search.search_products", return_value=[MagicMock()]),
+            patch("s3bloom.discovery.download.download_products", return_value=[product_dir]),
+            patch("s3bloom.processing.pipeline.process_single_pass", side_effect=RuntimeError("bad")),
+            patch("shutil.rmtree") as mock_rmtree,
+        ):
+            result = runner.invoke(app, _RUN_BASE_ARGS + [
+                "--output-dir", str(tmp_path),
+                "--delete-raw",
+            ])
+        assert result.exit_code == 1
+        mock_rmtree.assert_not_called()
