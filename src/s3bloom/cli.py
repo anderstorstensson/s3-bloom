@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import shutil
 import sys
 from datetime import date
 from pathlib import Path
@@ -147,6 +148,11 @@ def run(
         "--no-composites",
         help="Skip composite generation.",
     ),
+    delete_raw: bool = typer.Option(
+        False,
+        "--delete-raw",
+        help="Delete .SEN3 directories after successful processing to free disk space.",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -176,6 +182,7 @@ def run(
             resolution=resolution,
             composite_window=composite_window,
             formats=formats,
+            delete_raw=delete_raw,
         )
     except Exception as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
@@ -218,6 +225,11 @@ def run(
         try:
             result = process_single_pass(product_path, config)
             pass_results.append(result)
+            if config.output.delete_raw:
+                shutil.rmtree(product_path)
+                logging.getLogger(__name__).debug(
+                    "Deleted raw product: %s", product_path.name
+                )
         except Exception as exc:
             # One bad product must not abort the run — log and continue
             # so the user gets results from every product that worked.
@@ -293,6 +305,7 @@ def _build_config(
     resolution: int,
     composite_window: int,
     formats: str,
+    delete_raw: bool = False,
 ) -> PipelineConfig:
     """Translate raw CLI strings into a validated :class:`PipelineConfig`.
 
@@ -314,6 +327,7 @@ def _build_config(
             projection=projection,
             resolution_m=resolution,
             composite_window_days=composite_window,
+            delete_raw=delete_raw,
         ),
     )
 
