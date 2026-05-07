@@ -14,10 +14,12 @@ having to load the heavy NetCDFs just to read two scalars.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from satpy import Scene
+from s3bloom._winpath import win_path
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +148,11 @@ def _collect_filenames(product_path: Path) -> list[str]:
     recognise (tie points, instrument data, etc.) produce harmless
     warnings, so we feed it the entire directory.
     """
-    nc_files = sorted(product_path.glob("*.nc"))
-    filenames = [str(f) for f in nc_files]
+    extended = win_path(product_path)
+    nc_files = sorted(
+        e.path for e in os.scandir(extended) if e.name.endswith(".nc")
+    )
+    filenames = nc_files
 
     if not filenames:
         raise FileNotFoundError(
