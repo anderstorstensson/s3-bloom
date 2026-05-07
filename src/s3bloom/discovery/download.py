@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 import zipfile
 from pathlib import Path
 
 import requests
+from s3bloom._winpath import win_path
 from requests.adapters import HTTPAdapter
 from requests.exceptions import RetryError
 from rich.console import Console
@@ -320,6 +322,16 @@ def _extract_zip(zip_path: Path, raw_dir: Path) -> Path | None:
     """
     resolved_raw = raw_dir.resolve()
 
+    # Windows MAX_PATH (260 chars) blocks extraction to long UNC paths.
+    # The \\?\UNC\ prefix opts the path into extended-length mode.
+    if sys.platform == "win32":
+        s = str(resolved_raw)
+        extract_target: str | Path = (
+            "\\\\?\\UNC\\" + s[2:] if s.startswith("\\\\") else "\\\\?\\" + s
+        )
+    else:
+        extract_target = raw_dir
+
     with zipfile.ZipFile(zip_path, "r") as zf:
         # Defence against zip-slip: every resolved member path must be
         # contained within the target directory.
@@ -330,7 +342,7 @@ def _extract_zip(zip_path: Path, raw_dir: Path) -> Path | None:
                     f"Zip entry {member!r} would extract outside target directory"
                 )
 
-        zf.extractall(raw_dir)
+        zf.extractall(extract_target)
 
         for name in zf.namelist():
             if ".SEN3/" in name:
@@ -359,17 +371,20 @@ def _find_existing_products(
         products. Products not on disk are absent from the dict.
     """
     existing: dict[str, Path] = {}
-    if not raw_dir.exists():
+    if not os.path.exists(win_path(raw_dir)):
         return existing
 
-    sen3_dirs = {d.name: d for d in raw_dir.iterdir() if d.is_dir()}
+    sen3_dirs = {
+        e.name: raw_dir / e.name
+        for e in os.scandir(win_path(raw_dir))
+        if e.is_dir()
+    }
 
     for product in products:
         safe_title = product.title.rstrip(".")
         for dir_name, dir_path in sen3_dirs.items():
             if safe_title in dir_name or dir_name.startswith(safe_title):
-                xfdumanifest = dir_path / "xfdumanifest.xml"
-                if xfdumanifest.exists():
+                if os.path.exists(win_path(dir_path / "xfdumanifest.xml")):
                     existing[product.product_id] = dir_path
                     break
 
