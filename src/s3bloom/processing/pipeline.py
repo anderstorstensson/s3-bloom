@@ -126,6 +126,7 @@ def process_single_pass(
             dataset=ds_name,
             masking_preset=config.masking.preset,
             masking_flags=config.masking.flags_for_product(ds_name),
+            masking_dilation_px=config.masking.effective_dilation_px,
             projection=config.output.projection,
             resolution_m=config.output.resolution_m,
         )

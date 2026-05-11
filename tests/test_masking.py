@@ -175,6 +175,55 @@ class TestBuildQualityMask:
         mask = build_quality_mask(scene, MaskingConfig(preset="strict"), product="chl_nn")
         assert mask.dtype == bool
 
+    def test_dilation_buffers_cloud_pixels(self):
+        # 5×5 scene with a single CLOUD pixel at the centre (2,2). With a
+        # 1-pixel buffer the 4-connected neighbours are also masked.
+        data = np.zeros((5, 5), dtype=np.uint32)
+        data[2, 2] = 1  # CLOUD bit
+        scene = {
+            "wqsf": xr.DataArray(
+                data,
+                dims=["y", "x"],
+                attrs={
+                    "flag_meanings": "CLOUD INVALID",
+                    "flag_masks": np.array([1, 2], dtype=np.uint32),
+                },
+            )
+        }
+        mask = build_quality_mask(
+            scene,
+            MaskingConfig(custom_flags=["CLOUD"], dilation_px=1),
+        )
+        assert bool(mask.values[2, 2]) is True
+        assert bool(mask.values[1, 2]) is True   # buffered north
+        assert bool(mask.values[3, 2]) is True   # buffered south
+        assert bool(mask.values[2, 1]) is True   # buffered west
+        assert bool(mask.values[2, 3]) is True   # buffered east
+        assert bool(mask.values[0, 0]) is False  # corner unaffected
+
+    def test_dilation_does_not_buffer_non_cloud_flags(self):
+        # INVALID pixel at the centre — must NOT buffer outwards even with
+        # a non-zero dilation_px, because INVALID is not a cloud-class flag.
+        data = np.zeros((5, 5), dtype=np.uint32)
+        data[2, 2] = 2  # INVALID bit
+        scene = {
+            "wqsf": xr.DataArray(
+                data,
+                dims=["y", "x"],
+                attrs={
+                    "flag_meanings": "CLOUD INVALID",
+                    "flag_masks": np.array([1, 2], dtype=np.uint32),
+                },
+            )
+        }
+        mask = build_quality_mask(
+            scene,
+            MaskingConfig(custom_flags=["INVALID"], dilation_px=2),
+        )
+        assert bool(mask.values[2, 2]) is True
+        assert bool(mask.values[1, 2]) is False
+        assert bool(mask.values[2, 1]) is False
+
     def test_empty_flag_meanings_returns_all_false(self):
         wqsf = xr.DataArray(
             da.zeros((2, 2), dtype=np.uint32, chunks=(2, 2)),

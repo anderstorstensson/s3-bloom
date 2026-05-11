@@ -111,6 +111,15 @@ def run(
         "-m",
         help=f"Masking strictness: {', '.join(MASKING_PRESETS)}.",
     ),
+    mask_dilation: int = typer.Option(
+        -1,
+        "--mask-dilation",
+        help=(
+            "Spatial dilation of the WQSF mask in swath pixels. -1 uses the "
+            "preset default (strict=3, moderate=1, relaxed=0); 0 disables "
+            "dilation; >0 forces a custom buffer width."
+        ),
+    ),
     datasets: str = typer.Option(
         ",".join(DEFAULT_DATASETS),
         "--datasets",
@@ -176,6 +185,7 @@ def run(
             end_date=end_date,
             bbox_str=bbox,
             masking=masking,
+            mask_dilation=mask_dilation,
             datasets=datasets,
             output_dir=output_dir,
             projection=projection,
@@ -299,6 +309,7 @@ def _build_config(
     end_date: str,
     bbox_str: str,
     masking: str,
+    mask_dilation: int,
     datasets: str,
     output_dir: Path,
     projection: str,
@@ -320,7 +331,10 @@ def _build_config(
         bbox=BoundingBox.from_string(bbox_str),
         time_period=TimePeriod(start_date=sd, end_date=ed),
         datasets=[d.strip() for d in datasets.split(",")],
-        masking=MaskingConfig(preset=masking),
+        masking=MaskingConfig(
+            preset=masking,
+            dilation_px=None if mask_dilation < 0 else mask_dilation,
+        ),
         output=OutputConfig(
             base_dir=output_dir,
             formats=[f.strip() for f in formats.split(",")],

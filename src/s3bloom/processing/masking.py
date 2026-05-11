@@ -1,5 +1,16 @@
 """WQSF (Water Quality Science Flags) quality / cloud masking.
 
+Cloud-edge buffering
+--------------------
+After the per-pixel WQSF mask is built, the *cloud-class* portion of it
+(``CLOUD``, ``CLOUD_AMBIGUOUS``, ``CLOUD_MARGIN``) is optionally dilated
+spatially by ``MaskingConfig.dilation_px`` pixels. This catches sub-pixel
+cloud edges and aerosol haloes that the per-pixel flags miss but that
+visibly inflate chl_nn near mask boundaries. Only cloud-class flags are
+dilated — buffering glint, snow/ice, or sensor flags (COSMETIC, SUSPECT,
+SATURATED, INVALID) would discard good water unnecessarily, since those
+flags don't have an "edge contamination" failure mode.
+
 The WQSF layer in every OLCI L2 product is a per-pixel **bitfield**:
 each bit indicates one quality condition (cloud, sun glint, saturation,
 algorithm failure, ...). The masking step:
@@ -32,10 +43,18 @@ import dask.array as da
 import numpy as np
 import xarray as xr
 from satpy import Scene
+from scipy.ndimage import binary_dilation
 
 from s3bloom.config import MaskingConfig
 
 logger = logging.getLogger(__name__)
+
+# Cloud-class WQSF flags. Only these are spatially dilated by
+# ``MaskingConfig.dilation_px``; non-cloud flags (glint, snow, sensor
+# issues) are masked per-pixel only. See module docstring.
+_CLOUD_FLAGS: frozenset[str] = frozenset(
+    {"CLOUD", "CLOUD_AMBIGUOUS", "CLOUD_MARGIN"}
+)
 
 
 def build_quality_mask(
@@ -96,9 +115,15 @@ def build_quality_mask(
             coords=wqsf.coords,
         )
 
-    combined_bitmask = _build_combined_bitmask(
-        flags_to_mask, flag_meanings, flag_masks
+    cloud_flags = [f for f in flags_to_mask if f in _CLOUD_FLAGS]
+    other_flags = [f for f in flags_to_mask if f not in _CLOUD_FLAGS]
+    cloud_bitmask = _build_combined_bitmask(
+        cloud_flags, flag_meanings, flag_masks
     )
+    other_bitmask = _build_combined_bitmask(
+        other_flags, flag_meanings, flag_masks
+    )
+    combined_bitmask = cloud_bitmask | other_bitmask
 
     if combined_bitmask == 0:
         logger.warning(
@@ -115,13 +140,36 @@ def build_quality_mask(
     # exceed int32; the bitwise-AND must happen at >= the widest mask's
     # bit-width.
     wqsf_values = wqsf.values if not hasattr(wqsf.data, "dask") else wqsf.data
-    mask_data = (wqsf_values.astype(np.uint64) & np.uint64(combined_bitmask)) != 0
+    wqsf_u64 = wqsf_values.astype(np.uint64)
+    cloud_mask = (wqsf_u64 & np.uint64(cloud_bitmask)) != 0
+    other_mask = (wqsf_u64 & np.uint64(other_bitmask)) != 0
+
+    dilation_px = masking_config.effective_dilation_px
+    if dilation_px > 0 and cloud_bitmask != 0:
+        # OLCI's CLOUD_MARGIN ring is only ~1 pixel wide, so undetected
+        # sub-pixel cloud edges and aerosol haloes leak through and inflate
+        # chl_nn near mask boundaries. A spatial buffer on the cloud-class
+        # flags catches them; non-cloud flags (glint, sensor issues, snow)
+        # are not dilated since they don't have an edge-contamination mode.
+        if hasattr(cloud_mask, "compute"):
+            cloud_mask = cloud_mask.compute()
+        cloud_mask = binary_dilation(cloud_mask, iterations=dilation_px)
+        logger.info(
+            "Cloud mask dilated by %d pixel(s) (flags: %s)",
+            dilation_px,
+            ", ".join(cloud_flags) or "<none>",
+        )
+
+    mask_data = cloud_mask | other_mask
 
     mask = xr.DataArray(
         mask_data,
         dims=wqsf.dims,
         coords=wqsf.coords,
-        attrs={"description": f"Quality mask ({masking_config.preset})"},
+        attrs={
+            "description": f"Quality mask ({masking_config.preset})",
+            "dilation_px": dilation_px,
+        },
     )
 
     if hasattr(mask_data, "compute"):

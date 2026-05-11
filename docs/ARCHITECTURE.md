@@ -106,7 +106,7 @@ the rest of the code reads itself.
 |------|-----------|---------|
 | `PipelineConfig` | `config.py` | The fully validated run configuration. Built once by the CLI, passed to every stage. |
 | `BoundingBox` | `config.py` | AOI in WGS84 lon/lat. Has helpers to parse from CLI strings and convert to a tuple. |
-| `MaskingConfig` | `config.py` | Strictness preset (or custom flag list). Use `flags_for_product(name)` for product-aware masking. |
+| `MaskingConfig` | `config.py` | Strictness preset (or custom flag list) + cloud-mask dilation. Use `flags_for_product(name)` for product-aware masking and `effective_dilation_px` for the resolved buffer width. |
 | `ProductInfo` | `discovery/search.py` | Frozen dataclass: catalogue metadata for one CDSE product. |
 | `satpy.Scene` | (satpy) | Container for a loaded `.SEN3` product. Used internally in `processing/`; never returned to the CLI. |
 | `xarray.DataArray` | (xarray) | The currency of the processing/export layer. Carries the raster + CRS attributes. |
@@ -131,9 +131,13 @@ needed.
 ### A new masking strictness preset
 
 1. Add an entry to `_COMMON_FLAGS` in `defaults.py`.
-2. If the preset needs different BAC processing-chain flags, add an
-   entry to `_BAC_FLAGS`.
-3. Tests in `tests/test_masking.py` should already cover the
+2. If the preset needs different BAC or AAC processing-chain flags,
+   add an entry to `_BAC_FLAGS` (Open-Water `chl_oc4me`) or `_AAC_FLAGS`
+   (NN products in `AAC_PRODUCTS`).
+3. Add an entry to `MASKING_DILATION_PX` for the cloud-edge buffer
+   width — only the cloud-class flags (`CLOUD`, `CLOUD_AMBIGUOUS`,
+   `CLOUD_MARGIN`) are dilated.
+4. Tests in `tests/test_masking.py` should already cover the
    combination logic; add a case if the new preset has unusual
    structure.
 

@@ -68,6 +68,7 @@ class TestBuildConfig:
             end_date="2024-03-31",
             bbox_str="swedish_west_coast",
             masking="strict",
+            mask_dilation=-1,
             datasets="chl_nn",
             output_dir=Path("data"),
             projection="EPSG:3035",

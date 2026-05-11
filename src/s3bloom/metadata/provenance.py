@@ -68,6 +68,7 @@ class Provenance:
     dataset: str
     masking_preset: str
     masking_flags: tuple[str, ...]
+    masking_dilation_px: int
     projection: str
     resolution_m: int
     pipeline_version: str
@@ -91,6 +92,7 @@ class Provenance:
             "dataset": self.dataset,
             "masking_preset": self.masking_preset,
             "masking_flags": ",".join(self.masking_flags),
+            "masking_dilation_px": str(self.masking_dilation_px),
             "projection": self.projection,
             "resolution_m": self.resolution_m,
             "pipeline_version": self.pipeline_version,
@@ -125,6 +127,7 @@ def create_pass_provenance(
     dataset: str,
     masking_preset: str,
     masking_flags: list[str],
+    masking_dilation_px: int,
     projection: str,
     resolution_m: int,
 ) -> Provenance:
@@ -138,6 +141,7 @@ def create_pass_provenance(
         dataset=dataset,
         masking_preset=masking_preset,
         masking_flags=tuple(masking_flags),
+        masking_dilation_px=masking_dilation_px,
         projection=projection,
         resolution_m=resolution_m,
         pipeline_version=__version__,
@@ -152,6 +156,7 @@ def create_composite_provenance(
     dataset: str,
     masking_preset: str,
     masking_flags: list[str],
+    masking_dilation_px: int,
     projection: str,
     resolution_m: int,
     composite_window_days: int,
@@ -172,6 +177,7 @@ def create_composite_provenance(
         dataset=dataset,
         masking_preset=masking_preset,
         masking_flags=tuple(masking_flags),
+        masking_dilation_px=masking_dilation_px,
         projection=projection,
         resolution_m=resolution_m,
         pipeline_version=__version__,

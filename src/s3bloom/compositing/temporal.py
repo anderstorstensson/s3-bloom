@@ -118,6 +118,7 @@ def create_composites(
                 dataset=dataset_name,
                 masking_preset=config.masking.preset,
                 masking_flags=config.masking.flags_for_product(dataset_name),
+                masking_dilation_px=config.masking.effective_dilation_px,
                 projection=config.output.projection,
                 resolution_m=config.output.resolution_m,
                 composite_window_days=window,

@@ -19,6 +19,7 @@ class TestCreatePassProvenance:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD", "INVALID"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
         )
@@ -35,6 +36,7 @@ class TestCreatePassProvenance:
             dataset="chl_nn",
             masking_preset="moderate",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
         )
@@ -52,6 +54,7 @@ class TestCreateCompositeProvenance:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
             composite_window_days=3,
@@ -69,6 +72,7 @@ class TestCreateCompositeProvenance:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
             composite_window_days=7,
@@ -86,6 +90,7 @@ class TestToNetcdfAttrs:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
         )
@@ -101,6 +106,7 @@ class TestToNetcdfAttrs:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
         )
@@ -117,6 +123,7 @@ class TestToNetcdfAttrs:
             dataset="tsm_nn",
             masking_preset="moderate",
             masking_flags=["CLOUD", "INVALID"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
         )
@@ -132,6 +139,7 @@ class TestToNetcdfAttrs:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
             composite_window_days=3,
@@ -151,6 +159,7 @@ class TestProvenanceFrozen:
             dataset="chl_nn",
             masking_preset="strict",
             masking_flags=["CLOUD"],
+            masking_dilation_px=3,
             projection="EPSG:3035",
             resolution_m=300,
         )

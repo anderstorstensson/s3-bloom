@@ -85,6 +85,7 @@ class TestMaskingConfig:
         flags = mc.flags_for_product("chl_nn")
         assert "CLOUD" in flags
         assert "OCNN_FAIL" in flags
+        assert "MEGLINT" in flags
         assert "AC_FAIL" not in flags
         assert "RWNEG_O2" not in flags
         assert "WHITECAPS" not in flags
@@ -106,6 +107,13 @@ class TestMaskingConfig:
         flags = mc.flags_for_product("chl_nn")
         assert "AC_FAIL" not in flags
         assert "WHITECAPS" not in flags
+        assert "OCNN_FAIL" in flags
+        assert "MEGLINT" in flags
+
+    def test_relaxed_chl_nn_no_meglint(self):
+        mc = MaskingConfig(preset="relaxed")
+        flags = mc.flags_for_product("chl_nn")
+        assert "MEGLINT" not in flags
         assert "OCNN_FAIL" in flags
 
 

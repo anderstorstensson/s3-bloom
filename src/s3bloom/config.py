@@ -36,6 +36,7 @@ from s3bloom.defaults import (
     DEFAULT_MASKING,
     DEFAULT_PROJECTION,
     DEFAULT_RESOLUTION,
+    MASKING_DILATION_PX,
     MASKING_PRESETS,
     get_masking_flags,
 )
@@ -153,10 +154,18 @@ class MaskingConfig(BaseModel):
     a fully-explicit ``custom_flags`` list. When ``custom_flags`` is set it
     overrides the preset entirely and is applied uniformly to every
     requested dataset (no automatic BAC/AAC or per-product additions).
+
+    ``dilation_px`` expands the resulting boolean mask spatially by
+    morphological dilation, buffering every masked pixel by N additional
+    pixels. This catches sub-pixel cloud edges and aerosol haloes that the
+    per-pixel WQSF flags miss (chl_nn typically inflates near mask
+    boundaries). ``None`` means "use the preset default" from
+    :data:`MASKING_DILATION_PX`; ``0`` disables dilation entirely.
     """
 
     preset: str = DEFAULT_MASKING
     custom_flags: list[str] | None = None
+    dilation_px: int | None = None
 
     @field_validator("preset")
     @classmethod
@@ -202,6 +211,21 @@ class MaskingConfig(BaseModel):
         if self.custom_flags is not None:
             return list(self.custom_flags)
         return list(MASKING_PRESETS[self.preset])
+
+    @property
+    def effective_dilation_px(self) -> int:
+        """Resolve the actual dilation pixel count for this config.
+
+        ``custom_flags`` is treated as a fully-explicit user override, so
+        when set without an explicit ``dilation_px`` the buffer defaults
+        to 0 — preset-derived spatial buffers shouldn't sneak into a
+        config the caller built by hand.
+        """
+        if self.dilation_px is not None:
+            return max(0, int(self.dilation_px))
+        if self.custom_flags is not None:
+            return 0
+        return MASKING_DILATION_PX.get(self.preset, 0)
 
 
 class OutputConfig(BaseModel):

@@ -64,6 +64,7 @@ s3bloom run \
 | `--end-date` | `-e` | *required* | End date (YYYY-MM-DD) |
 | `--bbox` | `-b` | *required* | Bounding box preset or `lon_min,lat_min,lon_max,lat_max` |
 | `--masking` | `-m` | `strict` | Masking strictness: `strict`, `moderate`, `relaxed` |
+| `--mask-dilation` | | `-1` | Cloud-mask buffer in swath pixels. `-1` uses preset default (strict=3, moderate=1, relaxed=0); `0` disables; `>0` overrides |
 | `--datasets` | `-d` | `chl_nn` | Comma-separated: `chl_nn`, `chl_oc4me`, `tsm_nn` |
 | `--output-dir` | `-o` | `data` | Base output directory |
 | `--projection` | | `EPSG:3035` | Target CRS (ETRS89-LAEA, good for Baltic/Nordic) |
@@ -128,20 +129,57 @@ automatically selects the correct flags based on the dataset, following
 |----------|-----------|----------|
 | **Common** | All Ocean Colour products | CLOUD, CLOUD_AMBIGUOUS, CLOUD_MARGIN, INVALID, COSMETIC, SATURATED, SUSPECT, HISOLZEN, HIGHGLINT, SNOW_ICE |
 | **BAC processing chain** | Open Water products only (`chl_oc4me`) | AC_FAIL, WHITECAPS, ADJAC, RWNEG_O2–O8 |
+| **AAC processing chain** | NN products (`chl_nn`, `tsm_nn`, `iop_nn`) | MEGLINT |
 | **Product failure** | Per-product | OCNN_FAIL (`chl_nn`, `tsm_nn`, `iop_nn`), OC4ME_FAIL (`chl_oc4me`) |
 
 ### Strictness presets
 
 The `--masking` option controls how many *common* flags are applied.
-Processing-chain and product failure flags are always added automatically.
+Processing-chain (BAC/AAC) and product failure flags are always added automatically.
 
-| Preset | Common flags | chl_nn total | chl_oc4me total | Use case |
-|--------|-------------|:---:|:---:|----------|
-| **strict** (default) | 10 (all) | 11 | 21 | Conservative; best for quantitative analysis |
-| **moderate** | 7 | 8 | 10 | Balance between coverage and quality |
-| **relaxed** | 4 | 5 | 5 | Maximum coverage; visual inspection only |
+| Preset | Common flags | chl_nn total | chl_oc4me total | Cloud-edge buffer | Use case |
+|--------|-------------|:---:|:---:|:---:|----------|
+| **strict** (default) | 10 (all) | 12 | 21 | 3 px | Conservative; best for quantitative analysis |
+| **moderate** | 7 | 9 | 10 | 1 px | Balance between coverage and quality |
+| **relaxed** | 4 | 5 | 5 | 0 px | Maximum coverage; visual inspection only |
 
 Run `s3bloom list-presets` to see the exact flags per product and preset.
+
+### Cloud-edge buffer (`--mask-dilation`)
+
+OLCI's `CLOUD_MARGIN` flag is only a ~1-pixel ring around detected clouds, so
+undetected sub-pixel cloud edges and aerosol haloes leak through and visibly
+inflate `chl_nn` near mask boundaries. The pipeline therefore expands the
+cloud-class portion of the WQSF mask spatially via morphological dilation.
+
+**Only the cloud-class flags** (`CLOUD`, `CLOUD_AMBIGUOUS`, `CLOUD_MARGIN`)
+are dilated. Non-cloud flags (glint, snow/ice, sensor flags like SUSPECT or
+COSMETIC) are masked per-pixel only — buffering those would discard good
+water without addressing an edge-contamination failure mode.
+
+The default (3 px for `strict`) was chosen from a quantitative evaluation on
+a 2025-06-02 Baltic scene: 3 px removed 85% of cloud-edge artifacts (chl_nn
+> 10 mg/m³ within 5 px of a cloud) while preserving 100% of interior bloom
+signal. Independent precedent for cloud-risk buffering in Baltic remote
+sensing comes from Hieronymi et al., *ESSD* 18, 1307 (2026), whose A4O-ONNS
+chain ships an explicit `A4O_flag_cloud_risk` buffered flag.
+
+Override per-run with `--mask-dilation N` (in native swath pixels). Set to
+`0` to disable, or use a custom `MaskingConfig(custom_flags=...)` from the
+Python API — when `custom_flags` is set without an explicit `dilation_px`,
+no buffer is applied (explicit user lists are taken at face value).
+
+### Known limitation: Bothnian Sea / CDOM-rich water
+
+`chl_nn` is documented as unreliable in optically complex waters with high
+coloured dissolved organic matter (CDOM), notably the Bothnian Sea/Bay and
+parts of the Gulf of Finland. The neural network confuses CDOM absorption
+with chlorophyll, producing inflated values that no WQSF flag captures.
+EUMETSAT recommends `chl_nn` *"in mesotrophic and eutrophic waters
+exceeding 0.1 mg/m³ in chlorophyll concentration"* and not in CDOM-rich
+sub-basins. For Bothnian-Sea-grade quality, consider a Baltic-tuned
+algorithm such as A4O-ONNS (Hieronymi et al., *ESSD* 18, 1307, 2026) or
+C2RCC instead of the standard L2 product.
 
 ## Datasets
 

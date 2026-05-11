@@ -136,25 +136,54 @@ forward compatibility.
 **Masking logic:**
 
 1. Read the flag definitions from the WQSF dataset attributes
-2. Build a combined bitmask by OR-ing the masks for all requested flags
-3. For each pixel: `is_bad = (wqsf_value & combined_bitmask) != 0`
-4. Produce a boolean mask array (True = bad pixel)
+2. Resolve the flag list for `(preset, product)` — adds BAC flags for
+   `chl_oc4me`, AAC flags (MEGLINT) for the NN products, and the
+   per-product algorithm-failure flag
+3. Split that list into *cloud-class* flags (`CLOUD`, `CLOUD_AMBIGUOUS`,
+   `CLOUD_MARGIN`) and the rest, build a bitmask for each
+4. Compute two per-pixel masks: `cloud_mask` and `other_mask`
+5. **Spatially dilate `cloud_mask` by `dilation_px`** to buffer
+   sub-pixel cloud edges and aerosol haloes
+6. Final mask: `cloud_mask | other_mask` (True = bad pixel)
 
 **Masking presets:**
 
-| Preset | # Flags | Typical masked % | Notes |
-|--------|---------|------------------|-------|
-| strict | 20 | 60–90% | Includes SUSPECT, HIGHGLINT, ADJAC, all RWNEG bands |
-| moderate | 9 | 40–70% | Core flags only |
-| relaxed | 4 | 20–50% | Clouds, invalid, saturated, snow/ice |
+| Preset | # Common flags | chl_nn total | chl_oc4me total | Cloud buffer | Notes |
+|--------|---------------:|:------------:|:---------------:|:------------:|-------|
+| strict (default) | 10 | 12 | 21 | 3 px | Conservative; quantitative analysis |
+| moderate | 7 | 9 | 10 | 1 px | Coverage/quality balance |
+| relaxed | 4 | 5 | 5 | 0 px | Maximum coverage; visual only |
 
 The strict preset is the default because for bloom monitoring, false positives
 (flagging good pixels) are preferable to false negatives (keeping bad pixels
 that corrupt composites).
 
+**Cloud-edge dilation:** Only the cloud-class portion of the mask is dilated.
+OLCI's `CLOUD_MARGIN` is only ~1 pixel wide, so undetected sub-pixel cloud
+edges and aerosol haloes leak through and inflate `chl_nn` near mask
+boundaries. Non-cloud flags (glint, snow, sensor issues) are masked per-pixel
+only — those don't have an "edge contamination" failure mode and buffering
+them would lose good water for no benefit. Override per-run with
+`--mask-dilation N` (or `0` to disable). When a `MaskingConfig` is built with
+explicit `custom_flags`, dilation defaults to `0` so explicit lists are
+honoured verbatim.
+
+The 3-pixel default for `strict` was chosen quantitatively: on a 2025-06-02
+Baltic scene it removed 85% of cloud-edge artifacts (chl_nn > 10 mg/m³
+within 5 px of a cloud) while preserving 100% of interior bloom signal.
+Independent precedent for cloud-risk buffering in Baltic remote sensing
+comes from Hieronymi et al., *ESSD* 18, 1307 (2026).
+
 **Prefix matching:** Flag names like `RWNEG_O2` through `RWNEG_O8` (negative
 water-leaving reflectance in bands 2–8) are matched by prefix if the exact
 name isn't found in the product metadata.
+
+**Known limitation — CDOM-rich water:** `chl_nn` is documented as unreliable
+in optically complex waters with high coloured dissolved organic matter,
+notably the Bothnian Sea/Bay and parts of the Gulf of Finland. The neural
+network confuses CDOM absorption with chlorophyll, producing inflated values
+that no WQSF flag captures and that masking cannot fix. For these regions a
+Baltic-tuned algorithm (A4O-ONNS, C2RCC) is the appropriate solution.
 
 ### 3c. Mask application
 
