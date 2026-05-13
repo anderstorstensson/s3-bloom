@@ -102,14 +102,34 @@ def create_composites(
             satellites = [entry[1] for entry in window_entries]
             source_products = [entry[2] for entry in window_entries]
 
-            composite = _nanmean_composite(arrays)
-
             center_dt = datetime(
                 center_date.year,
                 center_date.month,
                 center_date.day,
                 tzinfo=timezone.utc,
             )
+
+            if not config.output.overwrite:
+                expected = [
+                    composite_output_path(
+                        base_dir=config.output.base_dir,
+                        fmt=fmt,
+                        dataset=dataset_name,
+                        center_date=center_dt,
+                        satellites=satellites,
+                        window_days=window,
+                    )
+                    for fmt in config.output.formats
+                ]
+                if expected and all(p.exists() for p in expected):
+                    logger.info(
+                        "Skipping composite %s %s (outputs exist)",
+                        dataset_name,
+                        center_date,
+                    )
+                    continue
+
+            composite = _nanmean_composite(arrays)
 
             prov = create_composite_provenance(
                 source_products=source_products,

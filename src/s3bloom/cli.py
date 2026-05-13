@@ -153,6 +153,11 @@ def run(
         "--delete-raw",
         help="Delete .SEN3 directories after successful processing to free disk space.",
     ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Re-process and overwrite outputs even if they already exist.",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -183,6 +188,7 @@ def run(
             composite_window=composite_window,
             formats=formats,
             delete_raw=delete_raw,
+            overwrite=overwrite,
         )
     except Exception as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
@@ -218,18 +224,23 @@ def run(
         f"\n[bold blue]Step 3/4: Processing {len(product_paths)} passes...[/bold blue]"
     )
     pass_results = []
+    skipped_count = 0
     for i, product_path in enumerate(product_paths, 1):
         console.print(
             f"  [{i}/{len(product_paths)}] {product_path.name}"
         )
         try:
             result = process_single_pass(product_path, config)
-            pass_results.append(result)
-            if config.output.delete_raw:
-                shutil.rmtree(product_path)
-                logging.getLogger(__name__).debug(
-                    "Deleted raw product: %s", product_path.name
-                )
+            if result is None:
+                skipped_count += 1
+                console.print("  [dim]Skipped (outputs exist)[/dim]")
+            else:
+                pass_results.append(result)
+                if config.output.delete_raw:
+                    shutil.rmtree(product_path)
+                    logging.getLogger(__name__).debug(
+                        "Deleted raw product: %s", product_path.name
+                    )
         except Exception as exc:
             # One bad product must not abort the run — log and continue
             # so the user gets results from every product that worked.
@@ -242,9 +253,15 @@ def run(
             # between products to keep peak RSS low on long runs.
             gc.collect()
 
-    if not pass_results:
+    if not pass_results and not skipped_count:
         console.print("[red]No passes were processed successfully.[/red]")
         raise typer.Exit(code=1)
+    if not pass_results and skipped_count:
+        console.print(
+            f"[dim]All {skipped_count} pass(es) already processed. "
+            "Use --overwrite to reprocess.[/dim]"
+        )
+        raise typer.Exit(code=0)
 
     composite_files: list[Path] = []
     if no_composites:
@@ -256,7 +273,7 @@ def run(
         )
         composite_files = create_composites(pass_results, config)
 
-    _print_summary(pass_results, composite_files, config)
+    _print_summary(pass_results, composite_files, config, skipped_count)
 
 
 @app.command()
@@ -306,6 +323,7 @@ def _build_config(
     composite_window: int,
     formats: str,
     delete_raw: bool = False,
+    overwrite: bool = False,
 ) -> PipelineConfig:
     """Translate raw CLI strings into a validated :class:`PipelineConfig`.
 
@@ -328,6 +346,7 @@ def _build_config(
             resolution_m=resolution,
             composite_window_days=composite_window,
             delete_raw=delete_raw,
+            overwrite=overwrite,
         ),
     )
 
@@ -354,11 +373,14 @@ def _print_summary(
     pass_results: list,
     composite_files: list[Path],
     config: PipelineConfig,
+    skipped_count: int = 0,
 ) -> None:
     """Print the final tally of passes and outputs at the end of a run."""
     total_pass_files = sum(len(pr.output_files) for pr in pass_results)
     console.print("\n[bold green]Pipeline complete![/bold green]")
     console.print(f"  Passes processed: {len(pass_results)}")
+    if skipped_count:
+        console.print(f"  Passes skipped (already existed): {skipped_count}")
     console.print(f"  Pass output files: {total_pass_files}")
     console.print(f"  Composite files: {len(composite_files)}")
     console.print(f"  Output directory: {config.output.base_dir}")

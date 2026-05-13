@@ -82,6 +82,10 @@ re-runs can skip re-downloading. Pass `--delete-raw` to remove each `.SEN3`
 directory immediately after its pass is processed successfully. Failed passes
 are never deleted, so they remain available for inspection or retry.
 
+> **Note:** if `--delete-raw` was used on a previous run, the `.SEN3`
+> directories are gone and will be re-downloaded on the next run, even if
+> processed outputs already exist.
+
 ### .SEN3 directory structure
 
 Each downloaded product is a directory containing ~35 NetCDF files:
@@ -101,6 +105,12 @@ S3A_OL_2_WFR____20240315T091500_....SEN3/
 
 Each downloaded product goes through four sub-steps. If any step fails for a
 product, processing continues with the next product.
+
+**Skipping already-processed passes:** before loading any data, the pipeline
+checks whether all expected output files (one per dataset × format combination)
+already exist on disk. If they do, the pass is skipped and a "Skipped (outputs
+exist)" message is printed. This makes re-runs fast when only a subset of passes
+are new. Pass `--overwrite` to force reprocessing of every pass regardless.
 
 ### 3a. Scene loading
 
@@ -245,6 +255,16 @@ For each date in the time range:
 A composite is produced for every date between the first and last pass,
 regardless of whether that specific date has data. This gives continuous
 daily coverage when the window captures passes from adjacent days.
+
+**Skipping existing composites:** the same skip logic applies here. If all
+format files for a center date already exist, the composite computation is
+skipped. Pass `--overwrite` to regenerate composites unconditionally.
+
+**Limitation with skipped passes:** if a pass is skipped (its per-pass outputs
+exist), it is not loaded into memory and therefore does not contribute to
+composite recomputation. If per-pass outputs exist but composite outputs do not
+(e.g. a run that crashed after processing but before compositing), re-run with
+`--overwrite` to get correct composites from all passes.
 
 ### File naming
 

@@ -195,9 +195,10 @@ and `defaults.py` would each consume one field of that record.
   responsive and is also what makes selectively importing one
   exporter cheap.
 * **Outputs are idempotent**: re-running the pipeline with the same
-  parameters skips already-downloaded products and overwrites
-  already-written outputs deterministically. There is no caching layer
-  beyond the on-disk presence of `.SEN3` directories.
+  parameters skips already-downloaded `.SEN3` products and, by default,
+  also skips per-pass and composite exports whose output files already
+  exist on disk. Pass `--overwrite` to force a full reprocess. There is
+  no caching layer beyond on-disk file presence.
 
 ## Tests
 
