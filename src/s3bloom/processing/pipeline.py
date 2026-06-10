@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import xarray as xr
 
@@ -67,7 +68,7 @@ class PassResult:
 def process_single_pass(
     product_path: Path,
     config: PipelineConfig,
-) -> PassResult:
+) -> Optional[PassResult]:
     """Run the full per-pass pipeline on one ``.SEN3`` product.
 
     Steps:
@@ -89,11 +90,28 @@ def process_single_pass(
 
     Returns
     -------
-    PassResult
-        In-memory results plus a list of paths that were written.
+    PassResult or None
+        In-memory results plus a list of paths that were written, or
+        ``None`` if all outputs already exist and ``overwrite`` is False.
     """
     satellite = extract_satellite(product_path)
     sensing_time = extract_sensing_time(product_path)
+
+    if not config.output.overwrite:
+        expected = [
+            pass_output_path(
+                base_dir=config.output.base_dir,
+                fmt=fmt,
+                dataset=ds_name,
+                sensing_time=sensing_time,
+                satellite=satellite,
+            )
+            for ds_name in config.datasets
+            for fmt in config.output.formats
+        ]
+        if expected and all(p.exists() for p in expected):
+            logger.info("Skipping %s (outputs exist)", product_path.name)
+            return None
 
     logger.info(
         "Processing %s (%s, %s)",

@@ -218,6 +218,7 @@ class OutputConfig(BaseModel):
     resolution_m: int = DEFAULT_RESOLUTION
     composite_window_days: int = COMPOSITE_WINDOW_DAYS
     delete_raw: bool = False
+    overwrite: bool = False
 
     @field_validator("formats")
     @classmethod

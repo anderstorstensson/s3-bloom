@@ -72,6 +72,7 @@ s3bloom run \
 | `--formats` | | `geotiff,netcdf,png` | Output formats |
 | `--no-composites` | | off | Skip composite generation |
 | `--delete-raw` | | off | Delete `.SEN3` directories after successful processing |
+| `--overwrite` | | off | Re-process and overwrite outputs even if they already exist |
 | `--verbose` | `-v` | off | Debug logging |
 
 ### `s3bloom list-presets`
